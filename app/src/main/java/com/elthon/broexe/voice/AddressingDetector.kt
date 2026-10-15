@@ -61,6 +61,7 @@ object AddressingDetector {
     const val W_STANDALONE_VOCATIVE = 0.60f
     const val W_LEADING_VOCATIVE = 0.45f
     const val W_TRAILING_VOCATIVE = 0.34f
+    const val W_MEDIAL_VOCATIVE = 0.22f
     const val THIRD_PERSON_MULTIPLIER = 0.30f
 
     const val W_META_REQUEST = 0.55f
@@ -280,6 +281,14 @@ object AddressingDetector {
         if (stripped.size > 1 && stripped.last() in BRO) {
             reasons.add("trailing vocative")
             return W_TRAILING_VOCATIVE
+        }
+
+        // Medial: "tell me bro what's the time". The mission is explicit that "bro"
+        // must count wherever it lands, not only at the edges.
+        val medial = stripped.withIndex().any { (i, t) -> i in 1 until stripped.size - 1 && t in BRO }
+        if (medial) {
+            reasons.add("medial vocative")
+            return W_MEDIAL_VOCATIVE
         }
 
         return 0f

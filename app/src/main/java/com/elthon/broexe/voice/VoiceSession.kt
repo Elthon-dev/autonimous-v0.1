@@ -100,7 +100,7 @@ class VoiceSession(
                 try {
                     onDetail(null)
                     onState(if (session.isActive()) VoiceState.LISTENING else VoiceState.IDLE)
-                    val utterance = awaitSpeech(transcriber, session, hint) ?: break
+                    val utterance = awaitSpeech(transcriber, session, config, hint) ?: break
                     handleUtterance(utterance, transcriber, config, decider, session)
                 } catch (e: CancellationException) {
                     throw e
@@ -138,16 +138,26 @@ class VoiceSession(
 
     /**
      * Stage A+B: block until a complete utterance is captured and transcribed.
-     * Returns null only when [stop] was requested.
+     *
+     * The turn is held open across short mid-sentence pauses (see [UtteranceAssembler])
+     * so one sentence is never split into fragments that are each judged — and mostly
+     * dropped — on their own. Once a partial transcript already looks addressed to Bro,
+     * the pause tolerance widens so the rest of the sentence is recovered. Returns null
+     * only when [stop] was requested.
      */
     private fun awaitSpeech(
         asr: CommandTranscriber,
         session: ConversationSession,
+        config: DetectionConfig,
         hint: KeywordHint?,
     ): Utterance? {
         val vad = VoiceActivityDetector()
         val preRoll = AudioRingBuffer(PRE_ROLL_FRAMES)
-        var capturing = false
+        val assembler = UtteranceAssembler(
+            minSpeechMs = MIN_SPEECH_MS,
+            maxUtteranceMs = MAX_UTTERANCE_MS,
+            continuationGraceMs = config.continuationGraceMs,
+        )
         var stream: OnlineStream? = null
         var startedAt = 0L
         var lastPartialAt = 0L
@@ -162,12 +172,14 @@ class VoiceSession(
                 VoiceDiagnostics.onFrame(level, audioPeak(frame))
                 hint?.feed(frame)
 
-                if (!capturing) {
+                if (!assembler.isCapturing) {
                     if (session.tick(now)) onState(VoiceState.IDLE)
                     preRoll.add(frame, now)
                     if (vad.process(level, now) == VadEvent.SPEECH_START) {
-                        capturing = true
                         startedAt = now
+                        assembler.begin(now)
+                        lastPartial = ""
+                        lastPartialAt = now
                         onState(VoiceState.SPEECH_CANDIDATE)
                         val s = asr.createStream()
                         stream = s
@@ -175,30 +187,57 @@ class VoiceSession(
                         for (f in preRoll.drain()) asr.accept(s, f)
                         VoiceDiagnostics.onSpeechCandidate(nextId(), 0)
                     }
-                } else {
-                    val active = stream!!
-                    asr.accept(active, frame)
-                    val dur = vad.speechDurationMs(now)
-                    if (now - lastPartialAt > PARTIAL_LOG_MS) {
-                        lastPartialAt = now
-                        val partial = asr.text(active)
-                        if (partial.isNotBlank() && partial != lastPartial) {
-                            lastPartial = partial
-                            VoiceDiagnostics.event("asr~", partial)
+                    continue
+                }
+
+                val active = stream ?: continue
+                asr.accept(active, frame)
+                if (vad.process(level, now) == VadEvent.SPEECH_START || vad.isSpeaking()) {
+                    assembler.onVoice(now)
+                }
+
+                // Partial-driven early address: if the in-flight transcript already looks
+                // addressed, give the user more time to finish the sentence.
+                if (now - lastPartialAt >= PARTIAL_LOG_MS) {
+                    lastPartialAt = now
+                    val partial = asr.text(active)
+                    if (partial.isNotBlank() && partial != lastPartial) {
+                        lastPartial = partial
+                        VoiceDiagnostics.event("asr~", partial)
+                        val signal = AddressingDetector.evaluate(
+                            partial,
+                            provisionalContext(session, config, assembler, now),
+                        )
+                        if (signal.score >= config.highThreshold) {
+                            if (!assembler.graceExtended) {
+                                VoiceDiagnostics.event(
+                                    "detect",
+                                    "addressed mid-utterance; waiting for the rest of the sentence",
+                                )
+                            }
+                            assembler.extendGrace()
                         }
                     }
-                    if (vad.process(level, now) == VadEvent.SPEECH_END) {
-                        if (dur < MIN_SPEECH_MS) {
-                            // Too short to be real speech; drop and keep watching.
+                }
+
+                if (assembler.exceededMax(now)) {
+                    return finishUtterance(asr, active, startedAt, now, assembler.speechMs, hint)
+                }
+
+                if (!vad.isSpeaking()) {
+                    when (assembler.onPause(now)) {
+                        HoldDecision.FINALIZE ->
+                            return finishUtterance(asr, active, startedAt, now, assembler.speechMs, hint)
+
+                        HoldDecision.DISCARD -> {
                             runCatching { active.release() }
                             stream = null
-                            capturing = false
+                            assembler.reset()
+                            vad.reset()
                             preRoll.clear()
-                        } else {
-                            return finishUtterance(asr, active, startedAt, now, dur, hint)
                         }
-                    } else if (now - startedAt > MAX_UTTERANCE_MS) {
-                        return finishUtterance(asr, active, startedAt, now, dur, hint)
+
+                        HoldDecision.HOLD -> Unit
                     }
                 }
             }
@@ -207,6 +246,21 @@ class VoiceSession(
             runCatching { stream?.release() }
         }
     }
+
+    /** Best-effort context for classifying an in-flight partial transcript. */
+    private fun provisionalContext(
+        session: ConversationSession,
+        config: DetectionConfig,
+        assembler: UtteranceAssembler,
+        now: Long,
+    ): DetectionContext = DetectionContext(
+        inSession = session.isActive(),
+        msSinceAssistantSpoke = session.msSinceAssistantSpoke(now),
+        followUpWindowMs = config.followUpMs,
+        speechMs = assembler.speechMs,
+        standaloneBro = config.standaloneBro,
+        keywordHit = null,
+    )
 
     private fun finishUtterance(
         asr: CommandTranscriber,
@@ -352,7 +406,7 @@ class VoiceSession(
         session.assistantSpeaking(SystemClock.elapsedRealtime())
 
         val captured = if (config.bargeIn) {
-            playWithBargeIn(audio.samples, audio.sampleRate, asr)
+            playWithBargeIn(audio.samples, audio.sampleRate, asr, config)
         } else {
             audioOut.play(audio.samples, audio.sampleRate)
             null
@@ -374,6 +428,7 @@ class VoiceSession(
         samples: FloatArray,
         sampleRate: Int,
         asr: CommandTranscriber,
+        config: DetectionConfig,
     ): Utterance? = coroutineScope {
         val vad = VoiceActivityDetector(
             startRms = BARGE_START_RMS,
@@ -382,24 +437,29 @@ class VoiceSession(
             minSilenceMs = BARGE_MIN_SILENCE_MS,
         )
         val preRoll = AudioRingBuffer(PRE_ROLL_FRAMES)
+        val assembler = UtteranceAssembler(
+            minSpeechMs = BARGE_MIN_SPEECH_MS,
+            maxUtteranceMs = MAX_UTTERANCE_MS,
+            continuationGraceMs = config.continuationGraceMs,
+        )
         var stream: OnlineStream? = null
-        var capturing = false
         var startedAt = 0L
 
         val playJob = launch(Dispatchers.IO) { audioOut.play(samples, sampleRate) }
         try {
-            while (running && playJob.isActive) {
+            // Keep reading after playback ends if a barge-in turn is still being assembled.
+            while (running && (playJob.isActive || assembler.isCapturing)) {
                 val frame = audioIn.readFrame()
                 if (frame.isEmpty()) continue
                 val now = SystemClock.elapsedRealtime()
                 val level = audioLevel(frame)
                 VoiceDiagnostics.onFrame(level, audioPeak(frame))
 
-                if (!capturing) {
+                if (!assembler.isCapturing) {
                     preRoll.add(frame, now)
                     if (vad.process(level, now) == VadEvent.SPEECH_START) {
-                        capturing = true
                         startedAt = now
+                        assembler.begin(now)
                         audioOut.stop()
                         onState(VoiceState.SPEECH_CANDIDATE)
                         val s = asr.createStream()
@@ -407,14 +467,32 @@ class VoiceSession(
                         for (f in preRoll.drain()) asr.accept(s, f)
                         VoiceDiagnostics.onSpeechCandidate(nextId(), 0)
                     }
-                } else {
-                    val active = stream!!
-                    asr.accept(active, frame)
-                    val dur = vad.speechDurationMs(now)
-                    if (vad.process(level, now) == VadEvent.SPEECH_END) {
-                        return@coroutineScope finishUtterance(asr, active, startedAt, now, dur, null)
-                    } else if (now - startedAt > MAX_UTTERANCE_MS) {
-                        return@coroutineScope finishUtterance(asr, active, startedAt, now, dur, null)
+                    continue
+                }
+
+                val active = stream ?: continue
+                asr.accept(active, frame)
+                if (vad.process(level, now) == VadEvent.SPEECH_START || vad.isSpeaking()) {
+                    assembler.onVoice(now)
+                }
+
+                if (assembler.exceededMax(now)) {
+                    return@coroutineScope finishUtterance(asr, active, startedAt, now, assembler.speechMs, null)
+                }
+                if (!vad.isSpeaking()) {
+                    when (assembler.onPause(now)) {
+                        HoldDecision.FINALIZE ->
+                            return@coroutineScope finishUtterance(asr, active, startedAt, now, assembler.speechMs, null)
+
+                        HoldDecision.DISCARD -> {
+                            runCatching { active.release() }
+                            stream = null
+                            assembler.reset()
+                            vad.reset()
+                            preRoll.clear()
+                        }
+
+                        HoldDecision.HOLD -> Unit
                     }
                 }
             }

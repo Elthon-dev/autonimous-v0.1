@@ -265,6 +265,14 @@ private fun DetectionSettingsSection(locked: Boolean) {
     SliderRow("Ambiguous threshold", cfg.ambiguousThreshold, 0.20f..0.80f, !locked) {
         update(cfg.copy(ambiguousThreshold = it))
     }
+    SliderRow(
+        "Pause tolerance (s)",
+        (cfg.continuationGraceMs / 1000f).coerceIn(0.2f, 3.0f),
+        0.2f..3.0f,
+        !locked,
+    ) {
+        update(cfg.copy(continuationGraceMs = (it * 1000f).toLong()))
+    }
     Text(
         text = "Ask for a question, or just say \u201cBro\u201d — anything addressed to Bro works. " +
             "High confidence starts a conversation; the middle band is decided by the policy above.",

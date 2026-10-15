@@ -94,6 +94,22 @@ class AddressingDetectorTest {
         assertEquals(ConfidenceBand.LOW, band("the weather looks nice today"))
     }
 
+    // --- "bro" anywhere in the utterance ---------------------------------------
+
+    @Test
+    fun medialVocativeCounts() {
+        val signal = AddressingDetector.evaluate("tell me bro what's the time", DetectionContext())
+        assertTrue("medial 'bro' is credited", signal.reasonString().contains("medial"))
+        assertTrue("medial vocative plus intent activates", signal.score >= 0.5f)
+    }
+
+    @Test
+    fun medialVocativeStillDoesNotRescueThirdPerson() {
+        val signal = AddressingDetector.evaluate("I told my bro the truth", DetectionContext())
+        assertTrue(signal.reasonString().contains("third-person"))
+        assertEquals(ConfidenceBand.LOW, decider.bandFor(signal.score))
+    }
+
     // --- ambiguous middle band --------------------------------------------------
 
     @Test

@@ -21,6 +21,11 @@ data class DetectionConfig(
     val followUpMs: Long = 8_000L,
     /** A conversation with no activity this long closes back to idle. */
     val idleTimeoutMs: Long = 30_000L,
+    /**
+     * How long a mid-sentence pause may last before the utterance is considered over.
+     * Longer values recover whole sentences at the cost of a little extra latency.
+     */
+    val continuationGraceMs: Long = UtteranceAssembler.DEFAULT_CONTINUATION_GRACE_MS,
     /** Allow the user to interrupt Bro while it is speaking. */
     val bargeIn: Boolean = true,
     /** In the ambiguous band, ask a short clarification instead of waiting. */
@@ -35,6 +40,7 @@ data class DetectionConfig(
             .coerceAtMost(highThreshold.coerceIn(0.05f, 0.99f)),
         followUpMs = followUpMs.coerceIn(0L, 120_000L),
         idleTimeoutMs = idleTimeoutMs.coerceIn(2_000L, 600_000L),
+        continuationGraceMs = continuationGraceMs.coerceIn(0L, 5_000L),
     )
 
     companion object {
@@ -51,6 +57,7 @@ object DetectionConfigStore {
     private const val KEY_AMBIGUOUS = "ambiguous_threshold"
     private const val KEY_FOLLOW_UP = "follow_up_ms"
     private const val KEY_IDLE = "idle_timeout_ms"
+    private const val KEY_CONTINUATION = "continuation_grace_ms"
     private const val KEY_BARGE_IN = "barge_in"
     private const val KEY_CLARIFY = "ambiguous_clarify"
     private const val KEY_KEYWORD_HINT = "keyword_hint"
@@ -64,6 +71,7 @@ object DetectionConfigStore {
             ambiguousThreshold = p.getFloat(KEY_AMBIGUOUS, d.ambiguousThreshold),
             followUpMs = p.getLong(KEY_FOLLOW_UP, d.followUpMs),
             idleTimeoutMs = p.getLong(KEY_IDLE, d.idleTimeoutMs),
+            continuationGraceMs = p.getLong(KEY_CONTINUATION, d.continuationGraceMs),
             bargeIn = p.getBoolean(KEY_BARGE_IN, d.bargeIn),
             ambiguousClarify = p.getBoolean(KEY_CLARIFY, d.ambiguousClarify),
             keywordHint = p.getBoolean(KEY_KEYWORD_HINT, d.keywordHint),
@@ -78,6 +86,7 @@ object DetectionConfigStore {
             .putFloat(KEY_AMBIGUOUS, c.ambiguousThreshold)
             .putLong(KEY_FOLLOW_UP, c.followUpMs)
             .putLong(KEY_IDLE, c.idleTimeoutMs)
+            .putLong(KEY_CONTINUATION, c.continuationGraceMs)
             .putBoolean(KEY_BARGE_IN, c.bargeIn)
             .putBoolean(KEY_CLARIFY, c.ambiguousClarify)
             .putBoolean(KEY_KEYWORD_HINT, c.keywordHint)
