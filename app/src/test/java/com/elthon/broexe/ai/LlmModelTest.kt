@@ -45,6 +45,6 @@ class LlmModelTest {
 
     @Test
     fun sizeLabelIsHumanReadable() {
-        assertEquals("537 MB", LlmCatalog.QWEN35_0_8B.sizeLabel())
+        assertEquals("491 MB", LlmCatalog.QWEN25_0_5B_INSTR.sizeLabel())
     }
 }

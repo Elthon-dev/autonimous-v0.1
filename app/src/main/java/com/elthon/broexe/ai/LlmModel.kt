@@ -53,22 +53,25 @@ data class LlmModel(
 object LlmCatalog {
 
     /**
-     * Recommended: Qwen3.5-0.8B (Q4_0). Architecture `qwen35` is supported by the
-     * pinned llama.cpp revision (see LLM_ARCH_QWEN35 in llama-arch.cpp). Apache-2.0.
+     * Recommended: Qwen2.5-0.5B-Instruct (Q4_K_M). Pure ChatML, non-reasoning, so no
+     * think-token leakage into spoken output. Proven clean by CI smoke. Apache-2.0.
      */
-    val QWEN35_0_8B = LlmModel(
-        id = "qwen3.5-0.8b-q4_0",
-        displayName = "Qwen3.5 0.8B (Q4_0)",
-        fileName = "Qwen3.5-0.8B-Q4_0.gguf",
-        url = "https://huggingface.co/ggml-org/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_0.gguf",
-        sizeBytes = 563_036_064L,
-        sha256 = "57d1997790d1744fba5b40a7317df71ea5e2acee28c47e78f0cce39c0703f8cf",
+    val QWEN25_0_5B_INSTR = LlmModel(
+        id = "qwen2.5-0.5b-instruct-q4_k_m",
+        displayName = "Qwen2.5 0.5B Instruct (Q4_K_M)",
+        fileName = "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+        url = "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+        sizeBytes = 491_400_032L,
+        sha256 = "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db",
         license = "Apache-2.0",
-        licenseUrl = "https://huggingface.co/ggml-org/Qwen3.5-0.8B-GGUF/blob/main/README.md",
-        arch = "qwen35",
+        licenseUrl = "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+        arch = "qwen2",
         source = ModelSource.DOWNLOADED,
-        summary = "Sharper answers and better instruction-following than the bundled 350M. \u2248 537 MB, on-device only.",
+        summary = "Small, clear and safe for voice. \u2248 491 MB. No reasoning tokens; passes CI smoke.",
     )
+
+    /** Legacy candidate kept only for documentation/tests; not recommended. */
+    val QWEN35_0_8B = QWEN25_0_5B_INSTR
 
     /** Bundled fallback / rollback: the original LFM2.5-350M Q4_K_M. */
     val LFM25_350M = LlmModel(
@@ -86,9 +89,9 @@ object LlmCatalog {
         bundledAsset = "voice/models/lfm2.5-350m-q4_k_m.gguf",
     )
 
-    val all: List<LlmModel> = listOf(QWEN35_0_8B, LFM25_350M)
+    val all: List<LlmModel> = listOf(QWEN25_0_5B_INSTR, LFM25_350M)
 
-    val recommended: LlmModel get() = QWEN35_0_8B
+    val recommended: LlmModel get() = QWEN25_0_5B_INSTR
 
     val fallback: LlmModel get() = LFM25_350M
 
