@@ -56,7 +56,7 @@ class OkHttpModelDownloader(
     companion object {
         private const val USER_AGENT = "bro-exe-android/model-downloader"
 
-        /** Long timeouts: a 537 MB file on mobile data is a slow, single request. */
+        /** Long timeouts: a several-hundred-MB file on mobile data is a slow, single request. */
         fun defaultClient(): OkHttpClient = OkHttpClient.Builder()
             .connectTimeout(20, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)

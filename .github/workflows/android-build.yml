@@ -28,14 +28,15 @@ jobs:
       - name: Run native smoke test
         run: bash scripts/llm_smoke_test.sh
 
-  # Candidate chat-model gate: prove the recommended Qwen3.5-0.8B (Q4_0) also
-  # loads and answers on the pinned llama.cpp, and that no reasoning/vision
-  # template artifact leaks into a spoken answer. If this fails, the app keeps
-  # falling back to the bundled LFM2.5-350M.
+  # Candidate chat-model gate: Qwen3.5-0.8B is REJECTED for voice -- it is a
+  # reasoning model that leaks  thinking tokens and, unlike Qwen3, has no /no_think
+  # soft switch; our pinned C API cannot pass enable_thinking=false. These two jobs
+  # record that rejection and are intentionally non-blocking (continue-on-error).
   model-smoke-qwen:
-    name: Qwen3.5-0.8B candidate smoke test
+    name: Qwen3.5-0.8B candidate smoke test (expected fail)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    continue-on-error: true
     env:
       LABEL: qwen35
       MODEL_NAME: Qwen3.5-0.8B-Q4_0.gguf
@@ -56,9 +57,10 @@ jobs:
   # proves whether prompt-level think disabling actually yields a clean spoken
   # answer before we decide whether to adopt the model.
   model-smoke-qwen-nothink:
-    name: Qwen3.5-0.8B think-off smoke test
+    name: Qwen3.5-0.8B think-off smoke test (expected fail)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    continue-on-error: true
     env:
       LABEL: qwen35nt
       MODEL_NAME: Qwen3.5-0.8B-Q4_0.gguf
@@ -75,8 +77,9 @@ jobs:
         run: bash scripts/llm_smoke_test.sh
 
   # Non-reasoning ChatML candidates (Qwen2.5 Instruct): no think tokens at all,
-  # so they fit our existing template path unchanged. Proves compatibility and
-  # clean spoken output before we pick one as the recommended download.
+  # so they fit our existing template path unchanged. The 0.5B is the chosen
+  # recommended download (491 MB, RAM-safe on a 3 GB device); the 1.5B passes too
+  # but is left here as a documented, larger alternative.
   model-smoke-qwen25-15b:
     name: Qwen2.5-1.5B-Instruct candidate smoke test
     runs-on: ubuntu-latest

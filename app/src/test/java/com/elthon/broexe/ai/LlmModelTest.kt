@@ -18,7 +18,7 @@ class LlmModelTest {
         assertNotNull(m.sha256)
         assertTrue("sha must be 64 lowercase hex", m.sha256!!.matches(Regex("[0-9a-f]{64}")))
         assertTrue(m.sizeBytes > 0)
-        assertEquals("qwen35", m.arch)
+        assertEquals("qwen2", m.arch)
     }
 
     @Test
@@ -45,6 +45,6 @@ class LlmModelTest {
 
     @Test
     fun sizeLabelIsHumanReadable() {
-        assertEquals("491 MB", LlmCatalog.QWEN25_0_5B_INSTR.sizeLabel())
+        assertEquals("469 MB", LlmCatalog.QWEN25_0_5B_INSTR.sizeLabel())
     }
 }

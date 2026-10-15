@@ -35,7 +35,7 @@ data class LlmModel(
     /** True when this model can be fetched on demand. */
     val isDownloadable: Boolean get() = source == ModelSource.DOWNLOADED && !url.isNullOrBlank()
 
-    /** Human-readable size, e.g. "537 MB". */
+    /** Human-readable size, e.g. "469 MB". */
     fun sizeLabel(): String {
         val mb = sizeBytes / (1024.0 * 1024.0)
         return if (mb >= 1024) "%.2f GB".format(mb / 1024.0) else "%.0f MB".format(mb)
@@ -69,9 +69,6 @@ object LlmCatalog {
         source = ModelSource.DOWNLOADED,
         summary = "Small, clear and safe for voice. \u2248 491 MB. No reasoning tokens; passes CI smoke.",
     )
-
-    /** Legacy candidate kept only for documentation/tests; not recommended. */
-    val QWEN35_0_8B = QWEN25_0_5B_INSTR
 
     /** Bundled fallback / rollback: the original LFM2.5-350M Q4_K_M. */
     val LFM25_350M = LlmModel(
