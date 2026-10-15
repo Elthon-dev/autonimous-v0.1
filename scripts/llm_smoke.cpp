@@ -26,8 +26,8 @@
 
 #include "llama.h"
 
-static const char * SYS  = "You are Bro, a concise spoken-voice assistant. Answer in one or two short sentences.";
-static const char * USER = "What is the capital of France?";
+static std::string SYS  = "You are Bro, a concise spoken-voice assistant. Answer in one or two short sentences.";
+static std::string USER = "What is the capital of France?";
 
 static std::string escape_json(const std::string & s) {
     std::string e;
@@ -122,6 +122,9 @@ int main(int argc, char ** argv) {
     const std::string p_mode = argv[4];
     const std::string s_mode = argv[5];
 
+    if (const char * s = getenv("SMOKE_SYS"))  SYS  = s;
+    if (const char * u = getenv("SMOKE_USER")) USER = u;
+
     llama_backend_init();
     llama_model_params mparams = llama_model_default_params();
     mparams.n_gpu_layers = 0;
@@ -145,7 +148,7 @@ int main(int argc, char ** argv) {
                                                 tmp_buf.data(), (int)tmp_buf.size());
         if (tmpl_len <= 0) { fprintf(stderr, "FAIL: no chat template in GGUF\n"); return 1; }
         std::string tmpl(tmp_buf.data(), (size_t)tmpl_len);
-        llama_chat_message chat[] = { { "system", SYS }, { "user", USER } };
+        llama_chat_message chat[] = { { "system", SYS.c_str() }, { "user", USER.c_str() } };
         int need = llama_chat_apply_template(tmpl.c_str(), chat, 2, true, nullptr, 0);
         if (need <= 0) need = 1024;
         rendered.resize((size_t)need + 8);
@@ -160,7 +163,7 @@ int main(int argc, char ** argv) {
                                                 tmp_buf.data(), (int)tmp_buf.size());
         if (tmpl_len <= 0) { fprintf(stderr, "FAIL: no chat template in GGUF\n"); return 1; }
         std::string tmpl(tmp_buf.data(), (size_t)tmpl_len);
-        llama_chat_message chat[] = { { "system", SYS }, { "user", USER } };
+        llama_chat_message chat[] = { { "system", SYS.c_str() }, { "user", USER.c_str() } };
         int need = llama_chat_apply_template(tmpl.c_str(), chat, 2, true, nullptr, 0);
         if (need <= 0) need = 1024;
         rendered.resize((size_t)need + 8);
@@ -177,6 +180,22 @@ int main(int argc, char ** argv) {
     } else {
         fprintf(stderr, "unknown prompt-mode: %s\n", p_mode.c_str());
         return 2;
+    }
+
+    // Qwen3.5 dropped the Qwen3 /no_think soft switch; the only supported way to
+    // disable reasoning is the enable_thinking=false chat-template kwarg, which
+    // our pinned C API (llama_chat_apply_template, no jinja/kwargs) cannot pass.
+    // The template's own non-thinking branch emits a closed think block right
+    // after the assistant header, so we reproduce that here to test the idea.
+    if (const char * off = getenv("SMOKE_ASSISTANT_THINK_OFF")) {
+        if (*off && *off != '0') {
+            // Assemble the tags at runtime; writing them literally in source
+            // gets mangled by the tooling, and they are model-specific anyway.
+            const std::string open_think = std::string("<") + "think" + ">";
+            const std::string close_think = std::string("<") + "/" + "think";
+            rendered += " " + open_think + "\n\n" + close_think + "\n\n";
+            fprintf(stderr, "think-off: appended closed think block to prompt\n");
+        }
     }
 
     GenResult r = generate(model, vocab, rendered, add_special, parse_special,
