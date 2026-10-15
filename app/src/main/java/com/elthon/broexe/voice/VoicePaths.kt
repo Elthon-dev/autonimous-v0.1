@@ -79,7 +79,7 @@ class VoicePaths private constructor(val root: File) {
 
     companion object {
         /** Rough extraction footprint with headroom for the staging copy. */
-        const val REQUIRED_BYTES: Long = 360L * MB
+        const val REQUIRED_BYTES: Long = 420L * MB
 
         private const val EXTRACT_VERSION = "voice-assets-v2"
 

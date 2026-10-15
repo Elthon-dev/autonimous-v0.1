@@ -116,6 +116,28 @@ jobs:
       - name: Run native smoke test
         run: bash scripts/llm_smoke_test.sh
 
+  # Streaming-ASR accuracy evidence: run the bundled 20M model and the larger
+  # 2023-06-26 candidate on the same reference audio with the same sherpa-onnx
+  # streaming-transducer engine, and require the new model's WER to be <= the old.
+  asr-smoke:
+    name: Streaming ASR WER smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install sherpa-onnx + numpy
+        run: pip install --quiet sherpa-onnx==1.13.8 numpy
+
+      - name: Run ASR WER smoke test
+        run: bash scripts/asr_smoke_test.sh
+
   # Milestone 4: download every bundled model, generate the wake-word keywords,
   # and emit scripts/voice_assets.lock (+ scripts/voice_keywords.txt) as artifacts.
   voice-assets:

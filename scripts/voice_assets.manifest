@@ -20,11 +20,15 @@ tar|models/kws/joiner.int8.onnx|https://github.com/k2-fsa/sherpa-onnx/releases/d
 tar|models/kws/tokens.txt|https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2|sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01/tokens.txt
 tar|models/kws/bpe.model|https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2|sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01/bpe.model
 
-# --- Streaming ASR (sherpa-onnx streaming zipformer en 20M, int8) --------------
-file|models/asr/encoder.int8.onnx|https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/resolve/main/encoder-epoch-99-avg-1.int8.onnx|
-file|models/asr/decoder.int8.onnx|https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/resolve/main/decoder-epoch-99-avg-1.int8.onnx|
-file|models/asr/joiner.int8.onnx|https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/resolve/main/joiner-epoch-99-avg-1.int8.onnx|
-file|models/asr/tokens.txt|https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/resolve/main/tokens.txt|
+# --- Streaming ASR (sherpa-onnx streaming zipformer en 2023-06-26, int8) -------
+# Upgraded from the tiny 20M-2023-02-17 model, which is the root cause of poor
+# recognition accuracy: same sherpa-onnx streaming-transducer engine, same file
+# kinds, and a byte-identical tokens.txt, but ~72 MB of int8 weights instead of
+# ~43 MB. Reference transcripts for the smoke test live in the model repo.
+file|models/asr/encoder.int8.onnx|https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/main/encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx|
+file|models/asr/decoder.int8.onnx|https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/main/decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx|
+file|models/asr/joiner.int8.onnx|https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/main/joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx|
+file|models/asr/tokens.txt|https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/main/tokens.txt|
 
 # --- Offline TTS (Piper en_US amy, low, int8; sherpa-onnx converted) ----------
 # Sherpa-onnx VITS needs tokens.txt + espeak-ng-data in addition to the .onnx,
