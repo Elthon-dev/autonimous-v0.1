@@ -1,0 +1,224 @@
+name: Android CI
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# llama.cpp revision this project's native binding is pinned to
+# (lfm2 arch support; scripts/llm_smoke_test.sh verified this exact commit).
+env:
+  LLAMA_CPP_REF: 358a420ec4ed59b6b0be08b1d1f71dd478b99a99
+
+jobs:
+  # Milestone 1: prove the pinned LFM2.5 GGUF loads and answers on the pinned
+  # llama.cpp revision, with no reasoning/tool-control token leakage.
+  model-smoke:
+    name: Native LLM model smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Run native smoke test
+        run: bash scripts/llm_smoke_test.sh
+
+  # Milestone 4: download every bundled model, generate the wake-word keywords,
+  # and emit scripts/voice_assets.lock (+ scripts/voice_keywords.txt) as artifacts.
+  voice-assets:
+    name: Generate voice asset lock
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install sherpa-onnx CLI
+        run: pip install --quiet sherpa-onnx==1.13.8 sentencepiece click pypinyin
+
+      - name: Fetch assets and generate lock
+        run: bash scripts/fetch_voice_assets.sh "$RUNNER_TEMP/voice" generate
+
+      - name: Show lock + keywords
+        run: |
+          echo "== scripts/voice_assets.lock =="
+          cat scripts/voice_assets.lock
+          echo "== keywords.txt =="
+          cat "$RUNNER_TEMP/voice/keywords.txt"
+
+      - name: Upload generated lock and keywords
+        uses: actions/upload-artifact@v4
+        with:
+          name: voice-asset-lock
+          path: |
+            scripts/voice_assets.lock
+            scripts/voice_keywords.txt
+
+  build:
+    name: Unit tests + debug APK
+    runs-on: ubuntu-latest
+    # Native llama.cpp cross-compile + multi-variant ggml is slow on a shared runner.
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # Stable, non-secret debug key so successive builds install over each other.
+      # Generated once (and then committed); future runs reuse the committed file.
+      - name: Prepare stable debug keystore
+        run: |
+          mkdir -p keystore
+          if [ ! -f keystore/debug.keystore ]; then
+            keytool -genkeypair -v \
+              -keystore keystore/debug.keystore \
+              -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 36500 \
+              -storepass android -keypass android \
+              -dname "CN=Android Debug,O=Android,C=US"
+            echo "generated a new debug keystore"
+          else
+            echo "reusing committed debug keystore"
+          fi
+          keytool -list -v -keystore keystore/debug.keystore -storepass android \
+            | grep -E "Alias name|SHA256|SHA-256" || true
+
+      # The native module (./llama) points CMake at third_party/llama.cpp.
+      - name: Clone llama.cpp (pinned commit)
+        run: |
+          git init -q third_party/llama.cpp
+          git -C third_party/llama.cpp remote add origin https://github.com/ggml-org/llama.cpp.git
+          git -C third_party/llama.cpp fetch -q --depth 1 origin "$LLAMA_CPP_REF"
+          git -C third_party/llama.cpp checkout -q "$LLAMA_CPP_REF"
+          echo "llama.cpp commit: $(git -C third_party/llama.cpp rev-parse HEAD)"
+
+      - name: Fetch sherpa-onnx android libs (pinned)
+        run: |
+          curl -sSL --retry 3 -o /tmp/sherpa.tar.bz2 \
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-v1.13.8-android.tar.bz2"
+          tar -xjf /tmp/sherpa.tar.bz2 -C /tmp
+          JNI="$PWD/third_party/sherpa-onnx/jniLibs/arm64-v8a"
+          mkdir -p "$JNI"
+          cp /tmp/jniLibs/arm64-v8a/libsherpa-onnx-jni.so "$JNI/"
+          cp /tmp/jniLibs/arm64-v8a/libonnxruntime.so "$JNI/"
+          ls -la "$JNI"
+
+      - name: Fetch and verify bundled voice assets
+        run: bash scripts/fetch_voice_assets.sh app/src/main/assets/voice verify
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x ./gradlew
+
+      # AGP can auto-install these, but doing it explicitly makes failures obvious.
+      - name: Install SDK platform, NDK and CMake
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "platforms;android-36" "build-tools;36.0.0" \
+            "ndk;27.0.12077973" "cmake;3.31.6"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.0.12077973" >> "$GITHUB_ENV"
+
+      - name: Run unit tests
+        run: ./gradlew --no-daemon testDebugUnitTest
+
+      - name: Build sherpa-onnx module
+        run: ./gradlew --no-daemon :sherpa:assembleRelease
+
+      - name: Build debug APK
+        run: ./gradlew --no-daemon assembleDebug
+
+      - name: Verify APK contents
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          ls -la "$APK"
+          echo "== native libs =="
+          unzip -l "$APK" | grep -E '\.so$' || true
+          echo "== voice assets =="
+          unzip -l "$APK" | grep 'assets/voice/'
+          for f in \
+            assets/voice/keywords.txt \
+            assets/voice/licenses/LFM-Open-License-v1.0.txt \
+            assets/voice/models/lfm2.5-350m-q4_k_m.gguf \
+            assets/voice/models/kws/encoder.int8.onnx \
+            assets/voice/models/kws/tokens.txt \
+            assets/voice/models/asr/encoder.int8.onnx \
+            assets/voice/models/asr/tokens.txt \
+            assets/voice/models/tts/en_US-amy-low.onnx ; do
+            unzip -l "$APK" | grep -qF "$f" || { echo "MISSING: $f"; exit 1; }
+          done
+          echo "all expected voice assets present"
+
+      - name: Upload unit test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-reports
+          path: app/build/reports/tests/testDebugUnitTest
+          if-no-files-found: warn
+
+      - name: Stage versioned APK + build info
+        if: success()
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          SHA7=$(git rev-parse --short=7 HEAD)
+          VERSION_NAME=$(grep '^versionName=' VERSION | cut -d= -f2)
+          VERSION_CODE=$(grep '^versionCode=' VERSION | cut -d= -f2)
+          OUT="bro-exe-v${VERSION_NAME}-${SHA7}-debug.apk"
+          cp "$APK" "$OUT"
+          sha256sum "$OUT" > "$OUT.sha256"
+          {
+            echo "appId=com.elthon.broexe"
+            echo "versionCode=${VERSION_CODE}"
+            echo "versionName=${VERSION_NAME}"
+            echo "commit=$(git rev-parse HEAD)"
+            echo "commitShort=${SHA7}"
+            echo "runUrl=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "apkFile=${OUT}"
+            cat "$OUT.sha256"
+          } > BUILD_INFO.txt
+          echo "== BUILD_INFO.txt =="
+          cat BUILD_INFO.txt
+
+      - name: Verify APK signature (install-over check)
+        if: success()
+        run: |
+          BT="$ANDROID_HOME/build-tools/36.0.0"
+          "$BT/apksigner" verify --print-certs app/build/outputs/apk/debug/app-debug.apk \
+            | grep -iE "Signer #1 certificate (DN|SHA-256)" || true
+
+      - name: Upload debug APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bro-exe-debug-apk
+          path: |
+            bro-exe-*-debug.apk
+            bro-exe-*-debug.apk.sha256
+            BUILD_INFO.txt
+          if-no-files-found: warn
+
+      - name: Upload debug keystore (one-time, to commit)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-keystore
+          path: keystore/debug.keystore
+          if-no-files-found: warn

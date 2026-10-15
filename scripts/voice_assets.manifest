@@ -1,0 +1,32 @@
+# Bro.exe voice asset manifest.
+#
+# One entry per line:  kind|dest|url|member
+#   kind    = file | tar | tardir
+#   dest    = path under the staged voice asset root (e.g. app/src/main/assets/voice)
+#   url     = download URL
+#   member  = member path inside the archive (tar: one file, tardir: a subtree),
+#             empty for file
+#
+# Hashes/sizes are recorded in scripts/voice_assets.lock (generated on CI, committed).
+
+# --- Local LLM (LiquidAI LFM2.5-350M, Q4_K_M, LFM Open License v1.0) ----------
+file|models/lfm2.5-350m-q4_k_m.gguf|https://huggingface.co/LiquidAI/LFM2.5-350M-GGUF/resolve/main/LFM2.5-350M-Q4_K_M.gguf|
+file|licenses/LFM-Open-License-v1.0.txt|https://huggingface.co/LiquidAI/LFM2.5-350M-GGUF/resolve/main/LICENSE|
+
+# --- Wake word KWS (sherpa-onnx kws zipformer gigaspeech 3.3M, int8) -----------
+tar|models/kws/encoder.int8.onnx|https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2|sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01/encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx
+tar|models/kws/decoder.int8.onnx|https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2|sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01/decoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx
+tar|models/kws/joiner.int8.onnx|https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2|sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01/joiner-epoch-12-avg-2-chunk-16-left-64.int8.onnx
+tar|models/kws/tokens.txt|https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2|sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01/tokens.txt
+tar|models/kws/bpe.model|https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2|sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01/bpe.model
+
+# --- Streaming ASR (sherpa-onnx streaming zipformer en 20M, int8) --------------
+file|models/asr/encoder.int8.onnx|https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/resolve/main/encoder-epoch-99-avg-1.int8.onnx|
+file|models/asr/decoder.int8.onnx|https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/resolve/main/decoder-epoch-99-avg-1.int8.onnx|
+file|models/asr/joiner.int8.onnx|https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/resolve/main/joiner-epoch-99-avg-1.int8.onnx|
+file|models/asr/tokens.txt|https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17/resolve/main/tokens.txt|
+
+# --- Offline TTS (Piper en_US amy, low, int8; sherpa-onnx converted) ----------
+# Sherpa-onnx VITS needs tokens.txt + espeak-ng-data in addition to the .onnx,
+# so the whole converted model directory is extracted here.
+tardir|models/tts|https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-amy-low-int8.tar.bz2|vits-piper-en_US-amy-low-int8

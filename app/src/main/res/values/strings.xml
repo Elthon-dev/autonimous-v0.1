@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Bro.exe</string>
+    <string name="observer_description">When enabled, Bro.exe reads the text of screen events from apps you allow, on this device only, so it can notice things you asked it to watch. It never uploads screen content. You can switch this off at any time.</string>
+</resources>

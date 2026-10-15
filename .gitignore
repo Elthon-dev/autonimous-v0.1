@@ -1,0 +1,39 @@
+# Built artifacts
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+*.keystore
+*.jks
+!keystore/debug.keystore
+*.log
+
+# Gradle
+.gradle/
+build/
+**/build/
+!gradle/wrapper/gradle-wrapper.jar
+local.properties
+
+# Android Studio / IntelliJ
+.idea/
+*.iml
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Native build inputs fetched by CI (never commit weights or prebuilt .so)
+third_party/
+**/src/main/jniLibs/**/*.so
+
+# Bundled voice models fetched by scripts/fetch_voice_assets.sh (never commit)
+app/src/main/assets/voice/
+
+# OS
+.DS_Store
+
+# Secrets (never commit)
+secrets.properties
+keystore.properties
+.env
