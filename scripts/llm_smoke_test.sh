@@ -1,22 +1,24 @@
 #!/usr/bin/env bash
-# Milestone-1 native smoke test:
-#   prove the pinned LFM2.5 GGUF loads + answers on the pinned llama.cpp revision.
+# Native smoke test:
+#   prove the GGUF actually shipped in the APK loads + answers cleanly on the
+#   pinned llama.cpp revision.
 # Run on CI (ubuntu-latest). Exits non-zero on any failed assertion.
 set -euo pipefail
 
 # llama.cpp revision this binding is pinned to.
 LLAMA_REF="${LLAMA_REF:-358a420ec4ed59b6b0be08b1d1f71dd478b99a99}"
 
-# Model under test. Defaults to the bundled LFM2.5-350M; override via env to smoke
-# a candidate model (e.g. Qwen3.5-0.8B) without editing this file.
-LABEL="${LABEL:-lfm}"
-MODEL_NAME="${MODEL_NAME:-LFM2.5-350M-Q4_K_M.gguf}"
-MODEL_URL="${MODEL_URL:-https://huggingface.co/LiquidAI/LFM2.5-350M-GGUF/resolve/main/${MODEL_NAME}}"
-MODEL_SHA256="${MODEL_SHA256:-7e6f72643caafc9a68256686638c4d7916f2cec76d1df478d4c3ddcd95a6aed4}"
-EXPECTED_BYTES="${EXPECTED_BYTES:-229312224}"
+# Model under test. Defaults to the model shipped in the APK (Qwen2.5-0.5B-Instruct
+# Q4_K_M); override via env to smoke a candidate model (e.g. Qwen3.5-0.8B) without
+# editing this file.
+LABEL="${LABEL:-qwen2505b}"
+MODEL_NAME="${MODEL_NAME:-qwen2.5-0.5b-instruct-q4_k_m.gguf}"
+MODEL_URL="${MODEL_URL:-https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/${MODEL_NAME}}"
+MODEL_SHA256="${MODEL_SHA256:-74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db}"
+EXPECTED_BYTES="${EXPECTED_BYTES:-491400032}"
 # Extra comma-separated substrings that must never leak into a spoken answer
 # (e.g. reasoning/vision template artifacts for a specific model family).
-EXTRA_BANNED="${EXTRA_BANNED:-}"
+EXTRA_BANNED="${EXTRA_BANNED:-<think,</think,reasoning}"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 AI_CHAT="$HERE/../llama/src/main/cpp/ai_chat.cpp"

@@ -15,10 +15,11 @@ env:
   LLAMA_CPP_REF: 358a420ec4ed59b6b0be08b1d1f71dd478b99a99
 
 jobs:
-  # Milestone 1: prove the pinned LFM2.5 GGUF loads and answers on the pinned
-  # llama.cpp revision, with no reasoning/tool-control token leakage.
+  # Blocking gate: prove the exact GGUF shipped inside the APK (Qwen2.5-0.5B-Instruct
+  # Q4_K_M) loads and answers cleanly on the pinned llama.cpp revision, with no
+  # reasoning/tool-control token leakage. Uses the script's defaults.
   model-smoke:
-    name: Native LLM model smoke test
+    name: Native LLM model smoke test (shipped Qwen2.5-0.5B)
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -77,9 +78,9 @@ jobs:
         run: bash scripts/llm_smoke_test.sh
 
   # Non-reasoning ChatML candidates (Qwen2.5 Instruct): no think tokens at all,
-  # so they fit our existing template path unchanged. The 0.5B is the chosen
-  # recommended download (491 MB, RAM-safe on a 3 GB device); the 1.5B passes too
-  # but is left here as a documented, larger alternative.
+  # so they fit our existing template path unchanged. The 0.5B (491 MB, RAM-safe on
+  # a 3 GB device) is the shipped model, gated by `model-smoke` above; the 1.5B passes
+  # too but is left here as a documented, larger alternative we do not ship.
   model-smoke-qwen25-15b:
     name: Qwen2.5-1.5B-Instruct candidate smoke test
     runs-on: ubuntu-latest
@@ -90,24 +91,6 @@ jobs:
       MODEL_URL: https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf
       MODEL_SHA256: 6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e
       EXPECTED_BYTES: "1117320736"
-      EXTRA_BANNED: "<think,</think,reasoning"
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Run native smoke test
-        run: bash scripts/llm_smoke_test.sh
-
-  model-smoke-qwen25-05b:
-    name: Qwen2.5-0.5B-Instruct candidate smoke test
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      LABEL: qwen2505b
-      MODEL_NAME: qwen2.5-0.5b-instruct-q4_k_m.gguf
-      MODEL_URL: https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf
-      MODEL_SHA256: 74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db
-      EXPECTED_BYTES: "491400032"
       EXTRA_BANNED: "<think,</think,reasoning"
     steps:
       - name: Checkout
@@ -156,7 +139,18 @@ jobs:
       - name: Install sherpa-onnx CLI
         run: pip install --quiet sherpa-onnx==1.13.8 sentencepiece click pypinyin
 
+      # The bundled models total ~600 MB (the shipped GGUF dominates). Cache the raw
+      # downloads so only the first run after an asset change pays for the transfer.
+      - name: Cache downloaded voice assets
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/voice-cache
+          key: voice-assets-${{ hashFiles('scripts/voice_assets.manifest') }}
+          restore-keys: voice-assets-
+
       - name: Fetch assets and generate lock
+        env:
+          VOICE_ASSET_CACHE: ${{ runner.temp }}/voice-cache
         run: bash scripts/fetch_voice_assets.sh "$RUNNER_TEMP/voice" generate
 
       - name: Show lock + keywords
@@ -228,7 +222,18 @@ jobs:
           cp /tmp/jniLibs/arm64-v8a/libonnxruntime.so "$JNI/"
           ls -la "$JNI"
 
+      - name: Cache downloaded voice assets
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/voice-cache
+          key: voice-assets-${{ hashFiles('scripts/voice_assets.manifest') }}
+          restore-keys: voice-assets-
+
+      # Verify each bundled asset against the committed lock (size + sha256), then
+      # stage it under app/src/main/assets/voice for packaging.
       - name: Fetch and verify bundled voice assets
+        env:
+          VOICE_ASSET_CACHE: ${{ runner.temp }}/voice-cache
         run: bash scripts/fetch_voice_assets.sh app/src/main/assets/voice verify
 
       - name: Set up Gradle
@@ -255,8 +260,9 @@ jobs:
       - name: Build debug APK
         run: ./gradlew --no-daemon assembleDebug
 
-      - name: Verify APK contents
+      - name: Verify APK contents (the shipped brain is inside)
         run: |
+          set -euo pipefail
           APK=app/build/outputs/apk/debug/app-debug.apk
           ls -la "$APK"
           echo "== native libs =="
@@ -265,8 +271,8 @@ jobs:
           unzip -l "$APK" | grep 'assets/voice/'
           for f in \
             assets/voice/keywords.txt \
-            assets/voice/licenses/LFM-Open-License-v1.0.txt \
-            assets/voice/models/lfm2.5-350m-q4_k_m.gguf \
+            assets/voice/licenses/Qwen2.5-0.5B-Instruct-Apache-2.0.txt \
+            assets/voice/models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
             assets/voice/models/kws/encoder.int8.onnx \
             assets/voice/models/kws/tokens.txt \
             assets/voice/models/asr/encoder.int8.onnx \
@@ -275,6 +281,26 @@ jobs:
             unzip -l "$APK" | grep -qF "$f" || { echo "MISSING: $f"; exit 1; }
           done
           echo "all expected voice assets present"
+
+          echo "== PROOF: the APK embeds the verified Qwen GGUF (no download needed) =="
+          GGUF_IN_APK=assets/voice/models/qwen2.5-0.5b-instruct-q4_k_m.gguf
+          PINNED_SHA=74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db
+          PINNED_BYTES=491400032
+          unzip -p "$APK" "$GGUF_IN_APK" > /tmp/embedded.gguf
+          GOT_BYTES=$(wc -c < /tmp/embedded.gguf)
+          GOT_SHA=$(sha256sum /tmp/embedded.gguf | awk '{print $1}')
+          echo "embedded bytes=$GOT_BYTES sha256=$GOT_SHA"
+          [ "$GOT_BYTES" = "$PINNED_BYTES" ] || { echo "FAIL: embedded GGUF size $GOT_BYTES != $PINNED_BYTES"; exit 1; }
+          [ "$GOT_SHA" = "$PINNED_SHA" ] || { echo "FAIL: embedded GGUF sha256 mismatch"; exit 1; }
+          echo "PROOF OK: APK ships the exact pinned Qwen2.5-0.5B-Instruct Q4_K_M GGUF."
+
+          echo "== PROOF: no on-device LLM download path remains in the ai package =="
+          if grep -RInE 'OkHttp|ModelDownloader|ModelStore|isDownloadable|DOWNLOADED|\.download\(' \
+               app/src/main/java/com/elthon/broexe/ai 2>/dev/null ; then
+            echo "FAIL: a model download code path still exists under com/elthon/broexe/ai"
+            exit 1
+          fi
+          echo "PROOF OK: the ai package has no model network/download code."
 
       - name: Upload unit test reports
         if: always()

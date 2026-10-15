@@ -14,6 +14,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import com.elthon.broexe.ai.LlmCatalog
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -87,10 +88,19 @@ class VoiceService : Service() {
         _state.value = VoiceState.LOADING_AI
         scope.launch {
             val paths = try {
-                VoicePaths.ensureExtracted(this@VoiceService)
+                VoicePaths.ensureExtracted(
+                    this@VoiceService,
+                    llmSha256 = LlmCatalog.default.sha256,
+                )
             } catch (e: InsufficientStorageException) {
                 _detail.value = "Not enough storage: ${e.message}"
                 VoiceDiagnostics.onError("Not enough storage: ${e.message}")
+                _state.value = VoiceState.ERROR
+                stopSelf()
+                return@launch
+            } catch (e: ModelIntegrityException) {
+                _detail.value = "Model is corrupt: ${e.message}"
+                VoiceDiagnostics.onError("Model integrity: ${e.message}")
                 _state.value = VoiceState.ERROR
                 stopSelf()
                 return@launch
@@ -152,10 +162,15 @@ class VoiceService : Service() {
         _testRunning = true
         scope.launch {
             try {
-                val paths = VoicePaths.ensureExtracted(this@VoiceService)
+                val paths = VoicePaths.ensureExtracted(
+                    this@VoiceService,
+                    llmSha256 = LlmCatalog.default.sha256,
+                )
                 VoiceSelfTest.run(test, this@VoiceService, paths)
             } catch (e: InsufficientStorageException) {
                 VoiceDiagnostics.onError("Not enough storage: ${e.message}")
+            } catch (e: ModelIntegrityException) {
+                VoiceDiagnostics.onError("Model integrity: ${e.message}")
             } catch (e: Throwable) {
                 VoiceDiagnostics.onError(e.message ?: "Test failed")
             } finally {

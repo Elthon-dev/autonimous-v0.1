@@ -99,8 +99,7 @@ class VoiceSession(
             VoiceDiagnostics.event(
                 "ai",
                 activeModel?.let {
-                    "active model=${it.model.id} file=${it.file.name} origin=${it.origin}" +
-                        (if (it.note.isNotEmpty()) " note=${it.note}" else "")
+                    "active model=${it.model.id} file=${it.file.name}"
                 } ?: "no chat model available",
             )
             val decider = ActivationDecider(

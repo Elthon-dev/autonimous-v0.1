@@ -9,9 +9,10 @@
 #
 # Hashes/sizes are recorded in scripts/voice_assets.lock (generated on CI, committed).
 
-# --- Local LLM (LiquidAI LFM2.5-350M, Q4_K_M, LFM Open License v1.0) ----------
-file|models/lfm2.5-350m-q4_k_m.gguf|https://huggingface.co/LiquidAI/LFM2.5-350M-GGUF/resolve/main/LFM2.5-350M-Q4_K_M.gguf|
-file|licenses/LFM-Open-License-v1.0.txt|https://huggingface.co/LiquidAI/LFM2.5-350M-GGUF/resolve/main/LICENSE|
+# --- Local LLM (Qwen2.5-0.5B-Instruct, Q4_K_M, Apache-2.0) --------------------
+# Shipped IN the APK and extracted on first launch; never downloaded on-device.
+file|models/qwen2.5-0.5b-instruct-q4_k_m.gguf|https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf|
+file|licenses/Qwen2.5-0.5B-Instruct-Apache-2.0.txt|https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/LICENSE|
 
 # --- Wake word KWS (sherpa-onnx kws zipformer gigaspeech 3.3M, int8) -----------
 tar|models/kws/encoder.int8.onnx|https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01.tar.bz2|sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01/encoder-epoch-12-avg-2-chunk-16-left-64.int8.onnx

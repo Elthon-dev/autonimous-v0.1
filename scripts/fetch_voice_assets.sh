@@ -26,6 +26,11 @@ KEYWORDS_SRC="$SCRIPT_DIR/voice_keywords.txt"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+# Optional persistent download cache (CI: restored/saved via actions/cache). When unset
+# the per-run temp dir is used, so local runs behave exactly as before.
+CACHE_DIR="${VOICE_ASSET_CACHE:-$WORK}"
+mkdir -p "$CACHE_DIR"
+
 log() { printf '==> %s\n' "$*" >&2; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 
@@ -35,14 +40,16 @@ mkdir -p "$OUT_DIR"
 declare -a RESULT=()
 
 fetch_cached() {
-  # fetch_cached URL -> prints local path (cached by basename)
+  # fetch_cached URL -> prints local path (cached by basename in $CACHE_DIR)
   local url="$1" name dest
   name="$(basename "${url%%\?*}")"
-  dest="$WORK/$name"
+  dest="$CACHE_DIR/$name"
   if [ ! -f "$dest" ]; then
     log "download $(basename "$url")"
     curl -fsSL --retry 4 --retry-delay 3 --retry-all-errors -o "$dest.part" "$url"
     mv "$dest.part" "$dest"
+  else
+    log "cache hit $(basename "$url")"
   fi
   printf '%s' "$dest"
 }

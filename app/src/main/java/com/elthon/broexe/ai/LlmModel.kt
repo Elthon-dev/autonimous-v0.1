@@ -1,40 +1,28 @@
 package com.elthon.broexe.ai
 
-/** Where a model's weights come from. */
-enum class ModelSource {
-    /** Shipped inside the APK as an (uncompressed) asset and extracted on first run. */
-    BUNDLED,
-
-    /** Fetched over HTTPS on the user's explicit request, then kept in app storage. */
-    DOWNLOADED,
-}
-
 /**
- * A single, fully-described chat model. Every field the UI, the downloader and the
- * loader need is here, so there is exactly one source of truth for "which GGUF".
+ * A single, fully-described chat model. The app ships exactly one — Qwen2.5-0.5B-Instruct
+ * (Q4_K_M) — embedded in the APK and extracted into app storage on first launch. There is
+ * deliberately no second candidate and no download path, so there is exactly one source of
+ * truth for "which GGUF".
  *
- * [sha256] is the authoritative LFS object hash from the hosting repo. It is verified
- * before a freshly downloaded file is ever marked usable, and re-checked on the
- * installed file so a truncated or swapped file is never loaded.
+ * [sha256] is the authoritative LFS object hash from the hosting repo. It is checked against
+ * the packaged asset before extraction is ever trusted, and the extracted file is re-checked
+ * so a truncated or swapped file can never reach llama.cpp.
  */
 data class LlmModel(
     val id: String,
     val displayName: String,
     val fileName: String,
-    val url: String?,
     val sizeBytes: Long,
-    val sha256: String?,
+    val sha256: String,
     val license: String,
     val licenseUrl: String?,
     val arch: String,
-    val source: ModelSource,
     val summary: String,
-    /** Path under `assets/` for [ModelSource.BUNDLED], e.g. `voice/models/x.gguf`. */
-    val bundledAsset: String? = null,
+    /** Path under `assets/`, e.g. `voice/models/x.gguf`. Always packaged inside the APK. */
+    val bundledAsset: String,
 ) {
-    /** True when this model can be fetched on demand. */
-    val isDownloadable: Boolean get() = source == ModelSource.DOWNLOADED && !url.isNullOrBlank()
-
     /** Human-readable size, e.g. "469 MB". */
     fun sizeLabel(): String {
         val mb = sizeBytes / (1024.0 * 1024.0)
@@ -43,57 +31,35 @@ data class LlmModel(
 }
 
 /**
- * The curated model set. Two entries on purpose:
+ * The curated model set: exactly one entry.
  *
- *  - the recommended downloadable model (better answers than the 350M), and
- *  - the bundled 350M kept as an offline fallback / rollback path.
- *
- * Nothing here auto-downloads; [LlmCatalog.recommended] is only *offered* in the UI.
+ * Qwen2.5-0.5B-Instruct (Q4_K_M) is a small, pure-ChatML, non-reasoning model that passes the
+ * native smoke gate cleanly (no think-token leakage into spoken output) and is RAM-safe on
+ * the ~3 GB target device. Apache-2.0, so redistributing the weights inside the APK is fine.
  */
 object LlmCatalog {
 
-    /**
-     * Recommended: Qwen2.5-0.5B-Instruct (Q4_K_M). Pure ChatML, non-reasoning, so no
-     * think-token leakage into spoken output. Proven clean by CI smoke. Apache-2.0.
-     */
     val QWEN25_0_5B_INSTR = LlmModel(
         id = "qwen2.5-0.5b-instruct-q4_k_m",
         displayName = "Qwen2.5 0.5B Instruct (Q4_K_M)",
         fileName = "qwen2.5-0.5b-instruct-q4_k_m.gguf",
-        url = "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
         sizeBytes = 491_400_032L,
         sha256 = "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db",
         license = "Apache-2.0",
         licenseUrl = "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF",
         arch = "qwen2",
-        source = ModelSource.DOWNLOADED,
-        summary = "Small, clear and safe for voice. \u2248 491 MB. No reasoning tokens; passes CI smoke.",
+        summary = "Ships inside the APK. Runs fully on-device; no download needed.",
+        bundledAsset = "voice/models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
     )
 
-    /** Bundled fallback / rollback: the original LFM2.5-350M Q4_K_M. */
-    val LFM25_350M = LlmModel(
-        id = "lfm2.5-350m-q4_k_m",
-        displayName = "LFM2.5 350M (Q4_K_M)",
-        fileName = "lfm2.5-350m-q4_k_m.gguf",
-        url = null,
-        sizeBytes = 229_312_224L,
-        sha256 = "7e6f72643caafc9a68256686638c4d7916f2cec76d1df478d4c3ddcd95a6aed4",
-        license = "LFM Open License v1.0",
-        licenseUrl = "https://huggingface.co/LiquidAI/LFM2.5-350M-GGUF",
-        arch = "lfm2",
-        source = ModelSource.BUNDLED,
-        summary = "Ships with the app. Works offline; kept as a safe rollback.",
-        bundledAsset = "voice/models/lfm2.5-350m-q4_k_m.gguf",
-    )
+    /** Every chat model the app knows about. There is exactly one on purpose. */
+    val all: List<LlmModel> = listOf(QWEN25_0_5B_INSTR)
 
-    val all: List<LlmModel> = listOf(QWEN25_0_5B_INSTR, LFM25_350M)
+    /** The sole default (and only) model. */
+    val default: LlmModel get() = QWEN25_0_5B_INSTR
 
-    val recommended: LlmModel get() = QWEN25_0_5B_INSTR
-
-    val fallback: LlmModel get() = LFM25_350M
-
-    /** The id selected on a fresh install. */
-    val DEFAULT_ID: String get() = recommended.id
+    /** The id used everywhere the selected model is referenced. */
+    val DEFAULT_ID: String get() = default.id
 
     fun byId(id: String?): LlmModel? = all.firstOrNull { it.id == id }
 }
