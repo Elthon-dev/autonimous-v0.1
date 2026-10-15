@@ -53,6 +53,7 @@ import com.elthon.broexe.ai.ModelManager
 import com.elthon.broexe.ai.ModelOrigin
 import com.elthon.broexe.ai.ModelSource
 import com.elthon.broexe.ai.ModelStore
+import com.elthon.broexe.memory.FileMemoryStore
 import com.elthon.broexe.voice.CrashReporter
 import com.elthon.broexe.voice.DetectionConfig
 import com.elthon.broexe.voice.DetectionConfigStore
@@ -65,6 +66,7 @@ import com.elthon.broexe.voice.VoiceTest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.Locale
 
 private val Green = Color(0xFF2E7D32)
@@ -155,6 +157,9 @@ private fun DiagnosticsScreen(modifier: Modifier = Modifier) {
         Spacer(Modifier.height(16.dp))
 
         ModelSection()
+        Spacer(Modifier.height(16.dp))
+
+        MemorySection()
         Spacer(Modifier.height(16.dp))
 
         Text("Stage tests (turn Voice Mode off first)", style = MaterialTheme.typography.labelLarge)
@@ -418,6 +423,35 @@ private fun ModelSection() {
             },
             dismissButton = { TextButton(onClick = { pending = null }) { Text("Cancel") } },
         )
+    }
+}
+
+@Composable
+private fun MemorySection() {
+    val context = LocalContext.current
+    val store = remember { FileMemoryStore(File(context.filesDir, "memory.txt")) }
+    var refreshKey by remember { mutableStateOf(0) }
+    val facts = remember(refreshKey) { store.all() }
+
+    Text("Memory", style = MaterialTheme.typography.labelLarge)
+    Spacer(Modifier.height(4.dp))
+    Text(
+        text = if (facts.isEmpty()) {
+            "Nothing remembered yet. Say \"remember that ...\" to teach Bro a fact."
+        } else {
+            "${facts.size} remembered fact(s):"
+        },
+        style = MaterialTheme.typography.bodySmall,
+        color = Grey,
+    )
+    for (fact in facts) {
+        Text("\u2022 ${fact.text}", style = MaterialTheme.typography.bodyMedium)
+    }
+    if (facts.isNotEmpty()) {
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(onClick = { store.clear(); refreshKey++ }) {
+            Text("Clear memory")
+        }
     }
 }
 

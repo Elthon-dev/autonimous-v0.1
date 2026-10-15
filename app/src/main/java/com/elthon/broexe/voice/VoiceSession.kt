@@ -4,6 +4,11 @@ import android.content.Context
 import android.os.SystemClock
 import com.elthon.broexe.ai.ActiveModel
 import com.elthon.broexe.ai.ModelManager
+import com.elthon.broexe.memory.FileMemoryStore
+import com.elthon.broexe.memory.Memory
+import com.elthon.broexe.memory.MemoryDirective
+import com.elthon.broexe.memory.MemoryFlow
+import com.elthon.broexe.memory.MemoryStore
 import com.k2fsa.sherpa.onnx.OnlineStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -11,6 +16,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 /** One captured, transcribed utterance ready to be judged. */
 private data class Utterance(
@@ -58,6 +64,12 @@ class VoiceSession(
     private val webSearch = WebSearch()
 
     private val modelManager by lazy { ModelManager.forContext(context, paths.llm) }
+
+    /**
+     * Persistent, retrievable user facts. Text-only and written solely on an
+     * explicit "remember ..." command — never microphone audio or ambient speech.
+     */
+    private val memoryStore: MemoryStore by lazy { FileMemoryStore(File(context.filesDir, "memory.txt")) }
 
     /** The model chosen for this session, resolved once in [run]. */
     private var activeModel: ActiveModel? = null
@@ -378,6 +390,24 @@ class VoiceSession(
             VoiceDiagnostics.event("detect", "address phrase present in transcript")
         }
 
+        // Memory commands are answered without the LLM; other turns get any
+        // relevant remembered facts injected into the prompt below.
+        val facts = when (val directive = MemoryFlow.handle(memoryStore, request, now)) {
+            is MemoryDirective.Reply -> {
+                VoiceDiagnostics.event("memory", "direct reply (${directive.text})")
+                session.assistantThinking(SystemClock.elapsedRealtime())
+                onState(VoiceState.THINKING)
+                if (!running) return
+                speakReply(directive.text, asr, session, config)
+                return
+            }
+
+            is MemoryDirective.Ask -> directive.facts
+        }
+        if (facts.isNotEmpty()) {
+            VoiceDiagnostics.event("memory", "recalled ${facts.size} fact(s) for this turn")
+        }
+
         val searchQuery = SearchTrigger.detect(request)
         val results = if (searchQuery != null) {
             onState(VoiceState.SEARCHING)
@@ -390,7 +420,7 @@ class VoiceSession(
 
         onState(VoiceState.THINKING)
         session.assistantThinking(SystemClock.elapsedRealtime())
-        val reply = withContext(Dispatchers.Default) { think(request, results) }
+        val reply = withContext(Dispatchers.Default) { think(request, results, facts) }
         if (!running) return
         if (reply.isBlank()) {
             onDetail("The local AI produced no answer.")
@@ -526,7 +556,11 @@ class VoiceSession(
         null
     }
 
-    private suspend fun think(question: String, results: List<SearchResult>?): String {
+    private suspend fun think(
+        question: String,
+        results: List<SearchResult>?,
+        facts: List<Memory> = emptyList(),
+    ): String {
         val responder = llm ?: LlmResponder.get(context).also { llm = it }
         val active = activeModel
         if (active == null) {
@@ -554,15 +588,23 @@ class VoiceSession(
         }
         // Not unloaded here: the model stays resident for the next turn. It is freed
         // once, in run()'s finally, when the voice session ends.
-        val prompt = if (results != null) {
+        val prompt = if (results == null && facts.isEmpty()) {
+            question
+        } else {
             buildString {
-                append("Web notes:\n")
-                append(LlmResponder.renderResults(results))
-                append("\n\nQuestion: ")
+                if (results != null) {
+                    append("Web notes:\n")
+                    append(LlmResponder.renderResults(results))
+                    append("\n\n")
+                }
+                if (facts.isNotEmpty()) {
+                    append("Facts you remember about the user:\n")
+                    facts.forEach { append("- ").append(it.text).append('\n') }
+                    append('\n')
+                }
+                append("Question: ")
                 append(question)
             }
-        } else {
-            question
         }
         return responder.answer(prompt)
     }
