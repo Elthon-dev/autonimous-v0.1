@@ -28,6 +28,28 @@ jobs:
       - name: Run native smoke test
         run: bash scripts/llm_smoke_test.sh
 
+  # Candidate chat-model gate: prove the recommended Qwen3.5-0.8B (Q4_0) also
+  # loads and answers on the pinned llama.cpp, and that no reasoning/vision
+  # template artifact leaks into a spoken answer. If this fails, the app keeps
+  # falling back to the bundled LFM2.5-350M.
+  model-smoke-qwen:
+    name: Qwen3.5-0.8B candidate smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LABEL: qwen35
+      MODEL_NAME: Qwen3.5-0.8B-Q4_0.gguf
+      MODEL_URL: https://huggingface.co/ggml-org/Qwen3.5-0.8B-GGUF/resolve/main/Qwen3.5-0.8B-Q4_0.gguf
+      MODEL_SHA256: 57d1997790d1744fba5b40a7317df71ea5e2acee28c47e78f0cce39c0703f8cf
+      EXPECTED_BYTES: "563036064"
+      EXTRA_BANNED: "<think,</think,<|endoftext|>,add_vision_id,<|vision_start|>,<|vision_end|>,reasoning"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Run native smoke test
+        run: bash scripts/llm_smoke_test.sh
+
   # Milestone 4: download every bundled model, generate the wake-word keywords,
   # and emit scripts/voice_assets.lock (+ scripts/voice_keywords.txt) as artifacts.
   voice-assets:

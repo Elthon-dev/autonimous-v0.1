@@ -2,6 +2,7 @@ package com.elthon.broexe.voice
 
 import android.content.Context
 import android.os.SystemClock
+import com.elthon.broexe.ai.ModelManager
 import com.k2fsa.sherpa.onnx.OnlineStream
 import java.util.Locale
 
@@ -195,21 +196,24 @@ object VoiceSelfTest {
     }
 
     private suspend fun ai(context: Context, paths: VoicePaths, question: String): String {
-        val llm = LlmResponder(context)
-        VoiceDiagnostics.event("ai", "model=${paths.llm.name} bytes=${paths.llm.length()}")
+        val llm = LlmResponder.get(context)
+        val active = ModelManager.forContext(context, paths.llm).activeModel()
+        if (active == null) {
+            VoiceDiagnostics.event("ai", "no chat model available")
+            return ""
+        }
         VoiceDiagnostics.event("ai", "backends=${llm.backendReport()}")
-        VoiceDiagnostics.event("ai", "loading model...")
-        try {
-            llm.load(paths.llm, LlmResponder.SYSTEM_PROMPT)
+        val outcome = try {
+            llm.ensureLoaded(active.file, LlmResponder.SYSTEM_PROMPT)
         } catch (t: Throwable) {
             VoiceDiagnostics.event("ai", "load FAILED: ${t.javaClass.simpleName}: ${t.message}")
             throw t
         }
-        VoiceDiagnostics.event("ai", "model ready; answering...")
+        VoiceDiagnostics.event("ai", "model=${active.model.id} $outcome; answering...")
         val reply = try {
             llm.answer(question)
         } finally {
-            llm.unload()
+            llm.release()
         }
         VoiceDiagnostics.onReply(reply.ifBlank { "(empty)" })
         return reply

@@ -3,26 +3,81 @@ package com.elthon.broexe.voice
 import android.content.Context
 import com.arm.aichat.AiChat
 import com.arm.aichat.InferenceEngine
+import com.arm.aichat.isModelLoaded
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeout
 import java.io.File
 
+/** What [LlmResponder.ensureLoaded] had to do, for honest diagnostics. */
+enum class LoadOutcome {
+    /** Weights were read and the native model built. */
+    LOADED,
+
+    /** Same model and prompt already live — nothing was touched. */
+    REUSED,
+
+    /** Same weights; only the system prompt string was swapped (no re-read). */
+    PROMPT_UPDATED,
+}
+
 /**
- * Thin voice-oriented wrapper over the `:llama` inference engine.
+ * Voice-oriented wrapper over the `:llama` inference engine.
  *
- * The engine is stateless per turn (each prompt re-decodes system + user), so the
- * system prompt is installed once after loading and every call to [answer] is an
- * independent question — exactly what a wake-word assistant wants.
+ * The engine keeps one model resident once loaded, so this class must be reused
+ * across turns instead of rebuilt per utterance — otherwise every question pays a
+ * full GGUF read + `llama_model_load` (the old "loading model..." every turn).
+ *
+ * [ensureLoaded] is idempotent: it reuses the resident model when the path matches
+ * and only swaps the system prompt when that differs. Callers keep one instance for
+ * the whole session and [release] it when done.
  */
-class LlmResponder(context: Context) {
+class LlmResponder internal constructor(
+    private val engine: InferenceEngine,
+) {
 
-    private val engine: InferenceEngine = AiChat.getInferenceEngine(context)
+    private var loadedPath: String? = null
+    private var loadedSystemPrompt: String? = null
 
-    suspend fun load(model: File, systemPrompt: String = SYSTEM_PROMPT) {
+    /**
+     * Ensure `model` is resident and the engine is primed with `systemPrompt`.
+     * Returns what actually happened so the caller can report it truthfully.
+     */
+    suspend fun ensureLoaded(model: File, systemPrompt: String = SYSTEM_PROMPT): LoadOutcome {
         awaitInitialized()
-        engine.loadModel(model.absolutePath)
+        val path = model.absolutePath
+        val current = engine.state.value
+
+        if (current.isModelLoaded && loadedPath == path) {
+            if (loadedSystemPrompt == systemPrompt) return LoadOutcome.REUSED
+            engine.setSystemPrompt(systemPrompt)
+            loadedSystemPrompt = systemPrompt
+            return LoadOutcome.PROMPT_UPDATED
+        }
+
+        // Different weights, an error, or nothing loaded: reset then load.
+        when (current) {
+            is InferenceEngine.State.ModelReady, is InferenceEngine.State.Error ->
+                runCatching { engine.cleanUp() }
+            else -> Unit
+        }
+        engine.loadModel(path)
         engine.setSystemPrompt(systemPrompt)
+        loadedPath = path
+        loadedSystemPrompt = systemPrompt
+        return LoadOutcome.LOADED
+    }
+
+    /** Force a reload on the next [ensureLoaded] even if the path is unchanged. */
+    fun invalidate() {
+        loadedPath = null
+        loadedSystemPrompt = null
+    }
+
+    /** Free the native model. Safe to call more than once. */
+    fun release() {
+        runCatching { engine.cleanUp() }
+        invalidate()
     }
 
     /** Ground-truth list of ggml backends/devices, or why they could not be read. */
@@ -39,17 +94,17 @@ class LlmResponder(context: Context) {
 
     /**
      * The native library loads itself asynchronously; block (bounded) until the
-     * engine reaches a loadable state so [load] does not race initialization.
+     * engine reaches a loadable state so [ensureLoaded] does not race initialization.
      */
     private suspend fun awaitInitialized() {
         if (engine.state.value is InferenceEngine.State.Initialized ||
-            engine.state.value is InferenceEngine.State.ModelReady
+            engine.state.value.isModelLoaded
         ) return
         val reached = withTimeout(60_000) {
             runCatching {
                 engine.state.first {
                     it is InferenceEngine.State.Initialized ||
-                        it is InferenceEngine.State.ModelReady ||
+                        it.isModelLoaded ||
                         it is InferenceEngine.State.Error
                 }
             }.getOrNull()
@@ -68,8 +123,6 @@ class LlmResponder(context: Context) {
         return clean(text.toString())
     }
 
-    fun unload() = runCatching { engine.cleanUp() }
-
     private fun clean(raw: String): String =
         raw.replace(Regex("[ \\t]+"), " ")
             .replace(Regex("\\n{2,}"), "\n")
@@ -79,8 +132,8 @@ class LlmResponder(context: Context) {
         const val MAX_TOKENS = 160
 
         /**
-         * Spoken-voice contract: short, plain sentences. Kept short so the 350M
-         * model stays on-topic and the TTS reply does not drone on.
+         * Spoken-voice contract: short, plain sentences. Kept short so the model
+         * stays on-topic and the TTS reply does not drone on.
          */
         const val SYSTEM_PROMPT =
             "You are Bro, a friendly concise voice assistant. " +
@@ -95,6 +148,19 @@ class LlmResponder(context: Context) {
                 "Reply in one or two short plain sentences. " +
                 "Do not use markdown, lists, or emoji. " +
                 "If the notes do not contain the answer, say you could not find it."
+
+        @Volatile
+        private var instance: LlmResponder? = null
+
+        /**
+         * The process-wide responder. The native engine is itself a singleton, so
+         * one responder per process is the correct scope: the model stays resident
+         * across turns and even across voice sessions until [release] is called.
+         */
+        fun get(context: Context): LlmResponder =
+            instance ?: synchronized(this) {
+                instance ?: LlmResponder(AiChat.getInferenceEngine(context)).also { instance = it }
+            }
 
         /** Render fetched results as compact, prompt-safe notes. */
         fun renderResults(results: List<SearchResult>): String {

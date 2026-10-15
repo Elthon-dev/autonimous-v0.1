@@ -4,11 +4,19 @@
 # Run on CI (ubuntu-latest). Exits non-zero on any failed assertion.
 set -euo pipefail
 
-LLAMA_REF=358a420ec4ed59b6b0be08b1d1f71dd478b99a99
-MODEL_NAME=LFM2.5-350M-Q4_K_M.gguf
-MODEL_URL="https://huggingface.co/LiquidAI/LFM2.5-350M-GGUF/resolve/main/${MODEL_NAME}"
-MODEL_SHA256=7e6f72643caafc9a68256686638c4d7916f2cec76d1df478d4c3ddcd95a6aed4
-EXPECTED_BYTES=229312224
+# llama.cpp revision this binding is pinned to.
+LLAMA_REF="${LLAMA_REF:-358a420ec4ed59b6b0be08b1d1f71dd478b99a99}"
+
+# Model under test. Defaults to the bundled LFM2.5-350M; override via env to smoke
+# a candidate model (e.g. Qwen3.5-0.8B) without editing this file.
+LABEL="${LABEL:-lfm}"
+MODEL_NAME="${MODEL_NAME:-LFM2.5-350M-Q4_K_M.gguf}"
+MODEL_URL="${MODEL_URL:-https://huggingface.co/LiquidAI/LFM2.5-350M-GGUF/resolve/main/${MODEL_NAME}}"
+MODEL_SHA256="${MODEL_SHA256:-7e6f72643caafc9a68256686638c4d7916f2cec76d1df478d4c3ddcd95a6aed4}"
+EXPECTED_BYTES="${EXPECTED_BYTES:-229312224}"
+# Extra comma-separated substrings that must never leak into a spoken answer
+# (e.g. reasoning/vision template artifacts for a specific model family).
+EXTRA_BANNED="${EXTRA_BANNED:-}"
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 AI_CHAT="$HERE/../llama/src/main/cpp/ai_chat.cpp"
@@ -93,7 +101,7 @@ echo "::group::run generation matrix"
 for pmode in tmpl_auto tmpl_special bos_special; do
   for smode in greedy temp; do
     key="${pmode}__${smode}"
-    ./llm_smoke "artifacts/$MODEL_NAME" 96 "out_${key}.json" "$pmode" "$smode" >/dev/null || true
+    ./llm_smoke "artifacts/$MODEL_NAME" 96 "out_${LABEL}_${key}.json" "$pmode" "$smode" >/dev/null || true
   done
 done
 for f in out_*.json; do
@@ -103,11 +111,12 @@ for f in out_*.json; do
 done
 echo "::endgroup::"
 
-python3 - "$PWD" <<'PY'
+python3 - "$PWD" "$LABEL" "$EXTRA_BANNED" <<'PY'
 import json, os, sys
-work = sys.argv[1]
+work, label, extra = sys.argv[1], sys.argv[2], sys.argv[3]
 banned = ["<|im_start|>", "<|im_end|>", "<|startoftext|>", "thought", "tool_call",
           "```", "To use a tool", "human", "<tool", "response is"]
+banned += [t for t in (s.strip().lower() for s in extra.split(",")) if t]
 def check(path):
     r = json.load(open(path))
     if r.get("gen_tokens", 0) < 4:
@@ -129,7 +138,7 @@ passed, report = [], []
 for pmode in ("tmpl_auto", "tmpl_special", "bos_special"):
     for smode in ("greedy", "temp"):
         key = f"{pmode}__{smode}"
-        path = os.path.join(work, f"out_{key}.json")
+        path = os.path.join(work, f"out_{label}_{key}.json")
         fails, r = check(path)
         if fails:
             report.append(f"{key}: FAIL -> " + "; ".join(fails))
@@ -145,7 +154,7 @@ if not passed:
     print("SMOKE FAIL: no prompt x sampler combo produced a clean answer")
     for pmode in ("tmpl_auto", "tmpl_special", "bos_special"):
         for smode in ("greedy", "temp"):
-            p = os.path.join(work, f"out_{pmode}__{smode}.json")
+            p = os.path.join(work, f"out_{label}_{pmode}__{smode}.json")
             if os.path.exists(p):
                 r = json.load(open(p))
                 print(f"trace {pmode}/{smode}: rendered={r['rendered_prompt']!r} text={r['text']!r}")

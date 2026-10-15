@@ -20,18 +20,22 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,6 +47,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.elthon.broexe.ai.LlmCatalog
+import com.elthon.broexe.ai.LlmModel
+import com.elthon.broexe.ai.ModelManager
+import com.elthon.broexe.ai.ModelOrigin
+import com.elthon.broexe.ai.ModelSource
+import com.elthon.broexe.ai.ModelStore
 import com.elthon.broexe.voice.CrashReporter
 import com.elthon.broexe.voice.DetectionConfig
 import com.elthon.broexe.voice.DetectionConfigStore
@@ -50,8 +60,10 @@ import com.elthon.broexe.voice.DiagnosticsSnapshot
 import com.elthon.broexe.voice.VoiceDiagnostics
 import com.elthon.broexe.voice.VoiceService
 import com.elthon.broexe.voice.VoiceState
+import com.elthon.broexe.voice.VoicePaths
 import com.elthon.broexe.voice.VoiceTest
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
 
@@ -140,6 +152,9 @@ private fun DiagnosticsScreen(modifier: Modifier = Modifier) {
         Spacer(Modifier.height(16.dp))
 
         DetectionSettingsSection(locked = isOn)
+        Spacer(Modifier.height(16.dp))
+
+        ModelSection()
         Spacer(Modifier.height(16.dp))
 
         Text("Stage tests (turn Voice Mode off first)", style = MaterialTheme.typography.labelLarge)
@@ -279,6 +294,131 @@ private fun DetectionSettingsSection(locked: Boolean) {
         style = MaterialTheme.typography.bodySmall,
         color = Grey,
     )
+}
+
+@Composable
+private fun ModelSection() {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    var refreshKey by remember { mutableStateOf(0) }
+    var pending by remember { mutableStateOf<LlmModel?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    var progress by remember { mutableStateOf(0f) }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    val manager = remember(refreshKey) {
+        ModelManager.forContext(context, VoicePaths.forFilesDir(context.filesDir).llm)
+    }
+    val active = manager.activeModel()
+
+    Text("AI model", style = MaterialTheme.typography.labelLarge)
+    Spacer(Modifier.height(4.dp))
+    Text(
+        text = active?.let {
+            val how = if (it.origin == ModelOrigin.BUNDLED_FALLBACK) "bundled" else "downloaded"
+            "Active: ${it.model.displayName}  ($how)"
+        } ?: "No chat model installed",
+        style = MaterialTheme.typography.bodyMedium,
+    )
+    if (active != null && active.note.isNotEmpty()) {
+        Text(active.note, style = MaterialTheme.typography.bodySmall, color = Grey)
+    }
+    Spacer(Modifier.height(8.dp))
+
+    for (model in LlmCatalog.all) {
+        val status = manager.status(model)
+        Column(Modifier.fillMaxWidth()) {
+            Text(
+                text = "${model.displayName}  ${model.sizeLabel()}  [${model.license}]",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                text = when {
+                    status.isActive && model.source == ModelSource.DOWNLOADED -> "active \u2014 downloaded"
+                    status.isActive -> "active \u2014 bundled"
+                    status.installed -> "installed, not selected"
+                    else -> "not installed"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = if (status.isActive) Green else Grey,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (model.isDownloadable && !status.installed) {
+                    Button(onClick = { pending = model }, enabled = !busy) {
+                        Text("Download ${model.sizeLabel()}")
+                    }
+                }
+                if (status.installed && !status.isActive) {
+                    OutlinedButton(
+                        onClick = {
+                            manager.select(model)
+                            refreshKey++
+                        },
+                        enabled = !busy,
+                    ) { Text("Use this") }
+                }
+                if (model.source == ModelSource.DOWNLOADED && status.installed) {
+                    OutlinedButton(
+                        onClick = {
+                            manager.deleteDownload(model)
+                            refreshKey++
+                        },
+                        enabled = !busy,
+                    ) { Text("Delete") }
+                }
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+
+    if (busy) {
+        LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+        Text("Downloading\u2026 ${(progress * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.height(8.dp))
+    }
+    error?.let {
+        Text("Download failed: $it", style = MaterialTheme.typography.bodySmall, color = Red)
+    }
+
+    pending?.let { model ->
+        AlertDialog(
+            onDismissRequest = { pending = null },
+            title = { Text("Download ${model.displayName}?") },
+            text = {
+                Text(
+                    "This downloads ${model.sizeLabel()} (${model.license}) over your " +
+                        "connection and saves it on the device. It runs fully on-device; " +
+                        "nothing is uploaded. You can delete it any time.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pending = null
+                        scope.launch {
+                            busy = true
+                            progress = 0f
+                            error = null
+                            try {
+                                val store = ModelStore.forContext(context)
+                                store.download(model) { written, total ->
+                                    progress = if (total > 0) written.toFloat() / total else 0f
+                                }
+                                manager.select(model)
+                            } catch (t: Throwable) {
+                                error = t.message ?: t.javaClass.simpleName
+                            } finally {
+                                busy = false
+                                refreshKey++
+                            }
+                        }
+                    },
+                ) { Text("Download") }
+            },
+            dismissButton = { TextButton(onClick = { pending = null }) { Text("Cancel") } },
+        )
+    }
 }
 
 @Composable

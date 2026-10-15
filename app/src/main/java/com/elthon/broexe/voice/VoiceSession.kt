@@ -2,6 +2,8 @@ package com.elthon.broexe.voice
 
 import android.content.Context
 import android.os.SystemClock
+import com.elthon.broexe.ai.ActiveModel
+import com.elthon.broexe.ai.ModelManager
 import com.k2fsa.sherpa.onnx.OnlineStream
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -40,9 +42,9 @@ private data class Utterance(
  *    closes it on inactivity; barge-in lets the user interrupt Bro mid-reply.
  *
  * Engines are leased conservatively: the ASR model stays resident during a voice
- * session, the LLM is loaded only while thinking and unloaded immediately after, and
- * the TTS model only while synthesizing. No two large models are held at once beyond
- * ASR + one working model.
+ * session, the chat model is loaded once and reused for every turn (not reloaded per
+ * utterance) and only released when the session ends, and the TTS model only while
+ * synthesizing.
  */
 class VoiceSession(
     private val context: Context,
@@ -54,6 +56,14 @@ class VoiceSession(
     private val audioIn = AudioInput()
     private val audioOut = AudioOutput()
     private val webSearch = WebSearch()
+
+    private val modelManager by lazy { ModelManager.forContext(context, paths.llm) }
+
+    /** The model chosen for this session, resolved once in [run]. */
+    private var activeModel: ActiveModel? = null
+
+    /** One responder reused for the whole session so the GGUF is never re-read per turn. */
+    private var llm: LlmResponder? = null
 
     @Volatile
     private var running = true
@@ -73,6 +83,14 @@ class VoiceSession(
             val transcriber = CommandTranscriber(paths)
             asr = transcriber
             val config = DetectionConfigStore.load(context)
+            activeModel = modelManager.activeModel()
+            VoiceDiagnostics.event(
+                "ai",
+                activeModel?.let {
+                    "active model=${it.model.id} file=${it.file.name} origin=${it.origin}" +
+                        (if (it.note.isNotEmpty()) " note=${it.note}" else "")
+                } ?: "no chat model available",
+            )
             val decider = ActivationDecider(
                 highThreshold = config.highThreshold,
                 ambiguousThreshold = config.ambiguousThreshold,
@@ -132,6 +150,11 @@ class VoiceSession(
             runCatching { audioIn.stop() }
             runCatching { audioIn.release() }
             runCatching { asr?.release() }
+            // Session over: drop the chat model so its hundreds of MB are not pinned
+            // while voice mode is off. Turns within a session reuse it.
+            runCatching { llm?.release() }
+            llm = null
+            VoiceDiagnostics.event("ai", "chat model released (voice session ended)")
             onState(VoiceState.OFF)
         }
     }
@@ -504,37 +527,44 @@ class VoiceSession(
     }
 
     private suspend fun think(question: String, results: List<SearchResult>?): String {
-        val llm = LlmResponder(context)
+        val responder = llm ?: LlmResponder.get(context).also { llm = it }
+        val active = activeModel
+        if (active == null) {
+            VoiceDiagnostics.event("ai", "no chat model available; cannot answer")
+            return ""
+        }
         val systemPrompt = if (results != null) {
             LlmResponder.SEARCH_SYSTEM_PROMPT
         } else {
             LlmResponder.SYSTEM_PROMPT
         }
-        VoiceDiagnostics.event("ai", "model=${paths.llm.name} bytes=${paths.llm.length()}")
-        VoiceDiagnostics.event("ai", "backends=${llm.backendReport()}")
-        VoiceDiagnostics.event("ai", "loading model...")
-        try {
-            llm.load(paths.llm, systemPrompt)
+        val outcome = try {
+            responder.ensureLoaded(active.file, systemPrompt)
         } catch (t: Throwable) {
             VoiceDiagnostics.event("ai", "load FAILED: ${t.javaClass.simpleName}: ${t.message}")
             throw t
         }
-        VoiceDiagnostics.event("ai", "model ready; answering...")
-        return try {
-            val prompt = if (results != null) {
-                buildString {
-                    append("Web notes:\n")
-                    append(LlmResponder.renderResults(results))
-                    append("\n\nQuestion: ")
-                    append(question)
-                }
-            } else {
-                question
-            }
-            llm.answer(prompt)
-        } finally {
-            llm.unload()
+        VoiceDiagnostics.event(
+            "ai",
+            "model=${active.model.id} file=${active.file.name} bytes=${active.file.length()} $outcome; answering...",
+        )
+        if (outcome == LoadOutcome.LOADED) {
+            runCatching { responder.backendReport() }
+                .onSuccess { VoiceDiagnostics.event("ai", "backends=$it") }
         }
+        // Not unloaded here: the model stays resident for the next turn. It is freed
+        // once, in run()'s finally, when the voice session ends.
+        val prompt = if (results != null) {
+            buildString {
+                append("Web notes:\n")
+                append(LlmResponder.renderResults(results))
+                append("\n\nQuestion: ")
+                append(question)
+            }
+        } else {
+            question
+        }
+        return responder.answer(prompt)
     }
 
     private fun nextId(): String = "u" + (++utteranceSeq)
