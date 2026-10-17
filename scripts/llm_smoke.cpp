@@ -64,7 +64,7 @@ static GenResult generate(llama_model * model, const llama_vocab * vocab,
     out.n_prompt = n_prompt;
 
     llama_context_params cparams = llama_context_default_params();
-    cparams.n_ctx    = 1024;
+    cparams.n_ctx    = 2048;
     cparams.n_batch  = 512;
     cparams.n_threads = 2;
     cparams.n_threads_batch = 2;
@@ -192,7 +192,7 @@ int main(int argc, char ** argv) {
             // Assemble the tags at runtime; writing them literally in source
             // gets mangled by the tooling, and they are model-specific anyway.
             const std::string open_think = std::string("<") + "think" + ">";
-            const std::string close_think = std::string("<") + "/" + "think";
+            const std::string close_think = std::string("<") + "/" + "think" + ">";
             rendered += " " + open_think + "\n\n" + close_think + "\n\n";
             fprintf(stderr, "think-off: appended closed think block to prompt\n");
         }

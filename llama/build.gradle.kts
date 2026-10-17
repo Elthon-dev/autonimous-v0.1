@@ -6,7 +6,7 @@ plugins {
 // Absolute path to the llama.cpp checkout. CI clones it into third_party/llama.cpp
 // (see .github/workflows/android-build.yml). Local builds must do the same.
 val llamaCppDir = File(rootProject.projectDir, "third_party/llama.cpp")
-val broexeCtxSize = (project.findProperty("broexe.contextSize") as String?) ?: "1024"
+val broexeCtxSize = (project.findProperty("broexe.contextSize") as String?) ?: "2048"
 
 android {
     namespace = "com.arm.aichat"

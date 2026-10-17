@@ -1,16 +1,26 @@
-// Bro.exe LFM2.5 JNI binding.
+// Bro.exe llama.cpp JNI binding.
 //
 // Uses only stable llama.cpp APIs (no llama.cpp/common helpers) so the binding
 // keeps compiling across champagne bumps of the pinned llama.cpp revision.
 //
-// Contract (proven by scripts/llm_smoke_test.cpp/.sh on CI):
-//   - prompt  = model's own ChatML template rendered via llama_chat_apply_template
+// Contract (proven by scripts/llm_smoke.cpp/.sh on CI):
+//   - prompt  = the model's own ChatML template (Qwen2.5-Instruct) rendered via
+//     llama_chat_apply_template
 //   - tokenize with add_special=false, parse_special=true  (auto-BOS is
 //     <|im_start|> on this vocab and DOUBLES the role header -> broken answers;
 //     this was the original runtime bug)
-//   - sampling: top_k(80) -> top_p(0.95) -> temp(0.6) -> repeat-penalty(1.05)
-//     -> greedy  (matches the accepted smoke-matrix combo)
-//   - stop on EOG, <|im_start|>, <|im_end|>, <|startoftext|>
+//   - sampling: repeat-penalty(1.05, last_n=64) -> greedy. Deliberately
+//     deterministic: the same question yields the same spoken answer and CI
+//     assertions stay stable. top_k/top_p/temperature are omitted on purpose --
+//     in front of a greedy sampler they are no-ops that only mislead readers.
+//     The chain is built once per turn and every accepted token is fed back into
+//     it, so the penalty is real (it used to be rebuilt per token and never fed,
+//     which made it a silent no-op).
+//   - stop on EOG (<|im_end|>, <|endoftext|>) and the literal role tokens
+//     <|im_start|> / <|im_end|>. <|startoftext|> is a Qwen3 token and is NOT in
+//     the Qwen2.5 vocab, so it is not checked.
+//   - a  thinking...</think> reasoning block is stripped app-side by
+//     voice/ThinkingBlockFilter before TTS; the native layer stays model-agnostic.
 //
 // JNI entry points mirror the previous ARM sample so app code keeps compiling
 // unchanged (see InferenceEngineImpl.kt).
@@ -56,13 +66,10 @@ constexpr int   N_THREADS_MAX           = 4;
 constexpr int   N_THREADS_HEADROOM      = 2;
 
 #ifndef BROEXE_CTX_SIZE
-#define BROEXE_CTX_SIZE 1024
+#define BROEXE_CTX_SIZE 2048
 #endif
 constexpr int   DEFAULT_CONTEXT_SIZE    = BROEXE_CTX_SIZE;
 constexpr int   BATCH_SIZE              = 512;
-constexpr float DEFAULT_SAMPLER_TEMP    = 0.6f;
-constexpr float DEFAULT_TOP_K           = 80.0f;
-constexpr float DEFAULT_TOP_P           = 0.95f;
 constexpr float DEFAULT_PENALTY_REPEAT  = 1.05f;
 constexpr int   DEFAULT_PENALTY_LAST_N  = 64;
 
@@ -73,6 +80,17 @@ static std::string      g_template;   // model chat template (from GGUF metadata
 static std::string      g_sys;        // last system prompt (raw text)
 static int              g_n_predict;  // remaining budget for the current turn
 static std::string      g_cache;      // incomplete UTF-8 tail buffer
+static llama_sampler  * g_smpl;       // per-turn sampler; free with free_sampler()
+
+// Built once per turn (processUserPrompt) and fed every accepted token, so the
+// repetition penalty accumulates over the actual conversation instead of being
+// rebuilt -- and reset -- on every single token.
+static void free_sampler() {
+    if (g_smpl) {
+        llama_sampler_free(g_smpl);
+        g_smpl = nullptr;
+    }
+}
 
 static bool ends_with(const std::string &s, const char *suffix) {
     const size_t n = strlen(suffix);
@@ -178,6 +196,7 @@ static void reset_state() {
     if (g_context) {
         llama_memory_clear(llama_get_memory(g_context), false);
     }
+    free_sampler();
     g_cache.clear();
     g_sys.clear();
     g_n_predict = 0;
@@ -372,9 +391,12 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_benchModel(JNIEnv *env, jobject
 
     const double el_ms = std::chrono::duration<double, std::milli>(
                              std::chrono::steady_clock::now() - t_start).count();
+    char desc_buf[256];
+    const char * model_desc = llama_model_desc(g_model, desc_buf, sizeof(desc_buf));
     std::ostringstream out;
     out << std::fixed << std::setprecision(1)
-        << "lfm2.5 350M Q4_K_M | pp " << n_pp << " | " << pp_tps << " t/s | tg "
+        << (model_desc && model_desc[0] ? model_desc : "unknown model")
+        << " | pp " << n_pp << " | " << pp_tps << " t/s | tg "
         << std::max(1, (int) tg) << " | " << tg_tps << " t/s | wall " << el_ms << " ms";
     return env->NewStringUTF(out.str().c_str());
 }
@@ -445,6 +467,18 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_processUserPrompt(
         return 4;
     }
 
+    // Per-turn sampler: penalty -> greedy, seeded with the prompt so the first
+    // generated tokens are penalised against what the prompt actually said.
+    free_sampler();
+    g_smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
+    llama_sampler_chain_add(g_smpl, llama_sampler_init_penalties(
+        llama_vocab_n_tokens(g_vocab), DEFAULT_PENALTY_LAST_N,
+        DEFAULT_PENALTY_REPEAT, 0.0f, 0.0f));
+    llama_sampler_chain_add(g_smpl, llama_sampler_init_greedy());
+    for (int i = 0; i < (int) tokens.size(); i++) {
+        llama_sampler_accept(g_smpl, tokens[i]);
+    }
+
     g_cache.clear();
     g_n_predict = n_predict > 0 ? n_predict : 64;
     LOGd("%s: decoded %d prompt tokens, budget=%d", __func__, n_tok, g_n_predict);
@@ -482,32 +516,32 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_generateNextToken(
         return nullptr;
     }
 
-    // Deterministic, proven sampler chain for LFM2.5.
-    llama_sampler * smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
-    llama_sampler_chain_add(smpl, llama_sampler_init_top_k((int32_t) DEFAULT_TOP_K));
-    llama_sampler_chain_add(smpl, llama_sampler_init_top_p(DEFAULT_TOP_P, 1));
-    llama_sampler_chain_add(smpl, llama_sampler_init_temp(DEFAULT_SAMPLER_TEMP));
-    llama_sampler_chain_add(smpl, llama_sampler_init_penalties(
-        llama_vocab_n_tokens(g_vocab), DEFAULT_PENALTY_LAST_N,
-        DEFAULT_PENALTY_REPEAT, 0.0f, 0.0f));
-    llama_sampler_chain_add(smpl, llama_sampler_init_greedy());
+    // Reuse the per-turn sampler built in processUserPrompt so the repetition
+    // penalty accumulates across the turn. Deterministic chain: repeat-penalty ->
+    // greedy (top_k/top_p/temperature would be no-ops in front of greedy).
+    if (!g_smpl) {
+        LOGw("%s: sampler missing; rebuilding a minimal greedy chain", __func__);
+        g_smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
+        llama_sampler_chain_add(g_smpl, llama_sampler_init_greedy());
+    }
 
-    const llama_token id = llama_sampler_sample(smpl, g_context, -1);
+    const llama_token id = llama_sampler_sample(g_smpl, g_context, -1);
     g_n_predict--;
 
     const bool is_eog = llama_vocab_is_eog(g_vocab, id);
     const char * piece_txt = llama_vocab_get_text(g_vocab, id);
     const bool role_stop = piece_txt && (strcmp(piece_txt, "<|im_start|>") == 0 ||
-                                         strcmp(piece_txt, "<|im_end|>") == 0 ||
-                                         strcmp(piece_txt, "<|startoftext|>") == 0);
-
-    llama_sampler_free(smpl);
+                                         strcmp(piece_txt, "<|im_end|>") == 0);
 
     if (is_eog || role_stop) {
         LOGd("%s: stop (eog=%d role_stop=%d text=%s)", __func__, is_eog, role_stop,
              piece_txt ? piece_txt : "");
         return nullptr;
     }
+
+    // Feed the accepted token back into the sampler so its penalty history stays
+    // in sync with the tokens actually generated this turn.
+    llama_sampler_accept(g_smpl, id);
 
     // Feed the sampled token back into the KV cache.
     // get_one borrows `one` and leaves logits == nullptr; the single token is the

@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -21,6 +22,10 @@ class LlmResponderLifecycleTest {
         var setPromptCount = 0
         var cleanCount = 0
         var lastPrompt: String? = null
+        var lastUserMessage: String? = null
+
+        /** Raw chunks the fake engine streams back; override per test. */
+        var streamChunks: List<String> = listOf("ok")
 
         override suspend fun loadModel(pathToModel: String) {
             loadCount++
@@ -33,7 +38,10 @@ class LlmResponderLifecycleTest {
             _state.value = InferenceEngine.State.ModelReady
         }
 
-        override fun sendUserPrompt(message: String, predictLength: Int): Flow<String> = flowOf("ok")
+        override fun sendUserPrompt(message: String, predictLength: Int): Flow<String> {
+            lastUserMessage = message
+            return flowOf(*streamChunks.toTypedArray())
+        }
 
         override suspend fun bench(pp: Int, tg: Int, pl: Int, nr: Int): String = ""
 
@@ -118,5 +126,53 @@ class LlmResponderLifecycleTest {
         val responder = LlmResponder(FakeEngine())
         responder.ensureLoaded(a, "sys")
         assertEquals("ok", responder.answer("hi"))
+    }
+
+    @Test
+    fun answerStripsThinkingBlockFromSpokenOutput() = runTest {
+        val engine = FakeEngine()
+        engine.streamChunks = listOf("Hello ", openTag, "secret reasoning", closeTag, "friend")
+        val responder = LlmResponder(engine)
+        responder.ensureLoaded(a, "sys")
+
+        assertEquals("Hello friend", responder.answer("q"))
+        assertEquals("secret reasoning", responder.lastReasoning)
+    }
+
+    @Test
+    fun answerWithThinkingPrefillDropsLeadingReasoning() = runTest {
+        val engine = FakeEngine()
+        engine.streamChunks = listOf("hidden chain of thought", closeTag, "the answer")
+        val responder = LlmResponder(engine)
+        responder.ensureLoaded(a, "sys")
+
+        assertEquals("the answer", responder.answer("q", thinking = true))
+        assertEquals("hidden chain of thought", responder.lastReasoning)
+    }
+
+    @Test
+    fun answerReportsNoReasoningForPlainModel() = runTest {
+        val engine = FakeEngine()
+        engine.streamChunks = listOf("just an answer")
+        val responder = LlmResponder(engine)
+
+        assertEquals("just an answer", responder.answer("q"))
+        assertNull(responder.lastReasoning)
+    }
+
+    @Test
+    fun answerStripsControlTokensFromSpeech() = runTest {
+        val engine = FakeEngine()
+        engine.streamChunks = listOf("Hi", controlToken, "there")
+        val responder = LlmResponder(engine)
+
+        assertEquals("Hi there", responder.answer("q"))
+    }
+
+    private companion object {
+        // Built from parts: a literal think tag in source has been mangled in transit.
+        val openTag = "<" + "think" + ">"
+        val closeTag = "<" + "/" + "think" + ">"
+        val controlToken = "<" + "|im_end|" + ">"
     }
 }

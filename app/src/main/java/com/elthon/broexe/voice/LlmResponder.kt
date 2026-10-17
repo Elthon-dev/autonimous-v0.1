@@ -40,6 +40,14 @@ class LlmResponder internal constructor(
     private var loadedSystemPrompt: String? = null
 
     /**
+     * Reasoning discarded by the last [answer] call, if the model thought before replying.
+     * Diagnostics only; it is never spoken and never fed back into the next turn.
+     */
+    @Volatile
+    var lastReasoning: String? = null
+        private set
+
+    /**
      * Ensure `model` is resident and the engine is primed with `systemPrompt`.
      * Returns what actually happened so the caller can report it truthfully.
      */
@@ -117,19 +125,45 @@ class LlmResponder internal constructor(
         }
     }
 
-    suspend fun answer(question: String, maxTokens: Int = MAX_TOKENS): String {
-        val text = StringBuilder()
-        engine.sendUserPrompt(question, maxTokens).collect { text.append(it) }
-        return clean(text.toString())
+    /**
+     * Ask the resident model and return only the speakable answer.
+     *
+     * Set [thinking] when the model's chat template prefills an open `" thinking"` block
+     * (Qwen3.5-style): the stream then starts inside reasoning and the first
+     * `"</think>"` closes it. The shipped Qwen2.5-Instruct is not a reasoning model, so
+     * the default is `false`. Either way a `" thinking ... </think>"` block emitted by the
+     * model is stripped, so its private reasoning can never reach the TTS engine.
+     */
+    suspend fun answer(
+        question: String,
+        maxTokens: Int = MAX_TOKENS,
+        thinking: Boolean = false,
+    ): String {
+        val filter = ThinkingBlockFilter(startsInThinking = thinking)
+        val visible = StringBuilder()
+        engine.sendUserPrompt(question, maxTokens).collect { chunk ->
+            visible.append(filter.feed(chunk))
+        }
+        visible.append(filter.finish())
+        lastReasoning = if (filter.sawThinking) filter.reasoningText.trim().ifEmpty { null } else null
+        return clean(visible.toString())
     }
 
     private fun clean(raw: String): String =
-        raw.replace(Regex("[ \\t]+"), " ")
+        raw.replace(SPECIAL_TOKEN, " ")
+            .replace(Regex("[ \\t]+"), " ")
             .replace(Regex("\\n{2,}"), "\n")
             .trim()
 
     companion object {
         const val MAX_TOKENS = 160
+
+        /**
+         * Last-resort scrub for control tokens that should never be spoken, e.g.
+         * `<|im_start|>`, `<|im_end|>`, `<|endoftext|>`. The native stop set normally
+         * halts generation before these; this catches anything that still slips through.
+         */
+        private val SPECIAL_TOKEN = Regex("<\\|[^|>]*\\|>")
 
         /**
          * Spoken-voice contract: short, plain sentences. Kept short so the model
