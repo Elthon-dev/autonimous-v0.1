@@ -52,6 +52,9 @@ class WakeWordDetector(private val paths: VoicePaths) {
             paths.keywords
         }
 
+    // Official zipformer-KWS scoring: 1.0 boost / 0.25 threshold and a single trailing
+    // blank before re-arming, so consecutive "bro"s are not swallowed. The per-keyword
+    // boosts in keywords.txt still win where present.
     private val spotter = KeywordSpotter(
         assetManager = null,
         config = KeywordSpotterConfig(
@@ -67,9 +70,9 @@ class WakeWordDetector(private val paths: VoicePaths) {
                 modelType = KWS_MODEL_TYPE,
             ),
             keywordsFile = keywordsFile.absolutePath,
-            keywordsScore = 1.5f,
+            keywordsScore = 1.0f,
             keywordsThreshold = 0.25f,
-            numTrailingBlanks = 2,
+            numTrailingBlanks = 1,
         ),
     )
 

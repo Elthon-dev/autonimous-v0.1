@@ -30,8 +30,12 @@ data class DetectionConfig(
     val bargeIn: Boolean = true,
     /** In the ambiguous band, ask a short clarification instead of waiting. */
     val ambiguousClarify: Boolean = false,
-    /** Use a keyword-spotter hit as extra (non-decisive) evidence. */
-    val keywordHint: Boolean = false,
+    /**
+     * Run the keyword spotter in the background as extra (non-decisive) address evidence,
+     * and as the core-word signal that lets EHS promote SPEECH to TARGET. On by default
+     * because that is the whole point of the improved wake path.
+     */
+    val keywordHint: Boolean = true,
     /**
      * Run the EHS (Extra High Sensitivity) acoustic gate on every background frame:
      * energy pre-filter + optional Silero confirm, feeding a mild address signal. On by
