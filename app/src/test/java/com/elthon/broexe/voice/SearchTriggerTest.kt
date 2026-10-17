@@ -17,10 +17,24 @@ class SearchTriggerTest {
     }
 
     @Test
+    fun toleratesPoliteOpeners() {
+        assertEquals("the weather", SearchTrigger.detect("can you search for the weather"))
+        assertEquals("Cebu", SearchTrigger.detect("could you look up Cebu"))
+        assertEquals("a good restaurant", SearchTrigger.detect("find me a good restaurant"))
+        assertEquals("the Eiffel Tower", SearchTrigger.detect("find information about the Eiffel Tower"))
+    }
+
+    @Test
     fun leavesOrdinaryQuestionsLocal() {
         assertNull(SearchTrigger.detect("what is the capital of France"))
         assertNull(SearchTrigger.detect("tell me a joke"))
         assertNull(SearchTrigger.detect("hey bro"))
+    }
+
+    @Test
+    fun bareFindIsNoLongerASearch() {
+        assertNull(SearchTrigger.detect("find the bug in my code"))
+        assertNull(SearchTrigger.detect("I need to find my keys"))
     }
 
     @Test

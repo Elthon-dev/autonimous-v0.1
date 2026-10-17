@@ -38,7 +38,7 @@ class WebSearch(
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return@withContext emptyList()
                 val html = response.body?.string().orEmpty()
-                DuckDuckGoParser.parse(html).take(limit)
+                SearchRanker.rank(DuckDuckGoParser.parse(html), query, limit)
             }
         }
 
@@ -120,4 +120,71 @@ object DuckDuckGoParser {
             .replace("&nbsp;", " ")
             .replace(Regex("\\s+"), " ")
             .trim()
+}
+
+/**
+ * Deterministic dedup + ordering for raw search hits. DuckDuckGo happily returns the
+ * same page twice (mirrors, redirects, tracking params) and orders by its own signals,
+ * which ignore the spoken query. Since the model is a 0.5B that reads every snippet in
+ * its context, we hand it the tightest, most on-topic slate instead: drop repeats, then
+ * prefer hits whose title/domain/snippet actually contain the query terms. Pure and
+ * side-effect free, so the whole policy is unit-tested without touching the network.
+ */
+object SearchRanker {
+
+    /** Words too common to mean anything; matching them would only shuffle noise. */
+    private val STOP = setOf(
+        "the", "a", "an", "of", "in", "on", "at", "to", "for", "and", "or", "is", "are",
+        "was", "were", "be", "what", "who", "when", "where", "how", "why", "me", "my",
+        "it", "that", "this", "please", "about", "current", "latest", "best", "near",
+    )
+
+    fun rank(results: List<SearchResult>, query: String, limit: Int): List<SearchResult> {
+        val terms = terms(query)
+        val seenUrls = HashSet<String>()
+        val seenTitles = HashSet<String>()
+        val scored = ArrayList<Pair<SearchResult, Int>>(results.size)
+        for (r in results) {
+            val urlKey = dedupKey(r.url)
+            if (urlKey.isEmpty() || !seenUrls.add(urlKey)) continue
+            val titleKey = r.domain.lowercase() + "|" + r.title.lowercase().trim()
+            if (!seenTitles.add(titleKey)) continue
+            scored += r to score(r, terms)
+        }
+        return scored
+            .withIndex()
+            .sortedWith(
+                compareByDescending<IndexedValue<Pair<SearchResult, Int>>> { it.value.second }
+                    .thenBy { it.index }
+            )
+            .take(limit)
+            .map { it.value.first }
+    }
+
+    /** Scheme- and query-insensitive key: `https://WWW.Example.com/a/?utm=1` → `example.com/a`. */
+    fun dedupKey(url: String): String = runCatching {
+        val u = URI(url)
+        val host = u.host?.lowercase()?.removePrefix("www.").orEmpty()
+        val path = u.path.orEmpty().trimEnd('/').lowercase()
+        if (host.isEmpty()) "" else host + path
+    }.getOrDefault(url.trim().lowercase())
+
+    private fun score(r: SearchResult, terms: Set<String>): Int {
+        if (terms.isEmpty()) return 0
+        val title = r.title.lowercase()
+        val snippet = r.snippet.lowercase()
+        val domain = r.domain.lowercase()
+        var s = 0
+        for (t in terms) {
+            if (title.contains(t)) s += 3
+            if (domain.contains(t)) s += 2
+            if (snippet.contains(t)) s += 1
+        }
+        return s
+    }
+
+    private fun terms(query: String): Set<String> =
+        query.lowercase().split(Regex("[^a-z0-9]+"))
+            .filter { it.length >= 2 && it !in STOP }
+            .toSet()
 }
