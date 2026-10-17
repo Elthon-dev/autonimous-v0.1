@@ -104,12 +104,12 @@ class EhsAnalyzer(private val config: EhsConfig = EhsConfig()) {
 
         val n = frame.size
         val rms = sqrt(sumSquares / n)
-        val rmsDbfs = toDbfs(rms)
-        val peakDbfs = toDbfs(peak)
-        val zcr = crossings.toDouble() / (n - 1).coerceAtLeast(1)
+        val rmsDbfs = toDbfs(rms.toFloat())
+        val peakDbfs = toDbfs(peak.toFloat())
+        val zcr = (crossings.toDouble() / (n - 1).coerceAtLeast(1)).toFloat()
         val hfRatio = if (sumSquares > 0.0) (hfSquares / sumSquares).toFloat().coerceIn(0f, 1f) else 0f
         val clarity = clarity(rmsDbfs, zcr, hfRatio)
-        return EhsFeatures(rmsDbfs, peakDbfs, zcr.toFloat(), hfRatio, clarity)
+        return EhsFeatures(rmsDbfs, peakDbfs, zcr, hfRatio, clarity)
     }
 
     /** 1.0 inside the conversational band, falling linearly to 0 twelve dB outside it. */
