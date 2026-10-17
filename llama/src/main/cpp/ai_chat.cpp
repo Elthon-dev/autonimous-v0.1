@@ -392,10 +392,10 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_benchModel(JNIEnv *env, jobject
     const double el_ms = std::chrono::duration<double, std::milli>(
                              std::chrono::steady_clock::now() - t_start).count();
     char desc_buf[256];
-    const char * model_desc = llama_model_desc(g_model, desc_buf, sizeof(desc_buf));
+    llama_model_desc(g_model, desc_buf, sizeof(desc_buf));
     std::ostringstream out;
     out << std::fixed << std::setprecision(1)
-        << (model_desc && model_desc[0] ? model_desc : "unknown model")
+        << (desc_buf[0] ? desc_buf : "unknown model")
         << " | pp " << n_pp << " | " << pp_tps << " t/s | tg "
         << std::max(1, (int) tg) << " | " << tg_tps << " t/s | wall " << el_ms << " ms";
     return env->NewStringUTF(out.str().c_str());
