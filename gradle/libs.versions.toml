@@ -16,6 +16,7 @@ junit = "4.13.2"
 robolectric = "4.15.1"
 androidxTestCore = "1.6.1"
 androidxJunit = "1.2.1"
+profileInstaller = "1.4.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -44,6 +45,7 @@ robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "
 mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", version.ref = "okhttp" }
 androidx-test-core = { group = "androidx.test", name = "core", version.ref = "androidxTestCore" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxJunit" }
+androidx-profileinstaller = { group = "androidx.profileinstaller", name = "profileinstaller", version.ref = "profileInstaller" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

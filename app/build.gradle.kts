@@ -112,6 +112,8 @@ dependencies {
 
     implementation(libs.okhttp)
     implementation(libs.kotlinx.coroutines.android)
+    // Installs the packaged baseline profile (assets/dexopt/baseline.prof) on device.
+    implementation(libs.androidx.profileinstaller)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
 

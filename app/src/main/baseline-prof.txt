@@ -1,0 +1,15 @@
+# Hand-authored Baseline Profile (Human-Readable Format).
+# AGP 7.4+ compiles src/main/baseline-prof.txt into assets/dexopt/baseline.prof and
+# androidx.profileinstaller installs it on device, so ART AOT-compiles these hot paths
+# instead of interpret-only on first run.
+#
+# Rules are matched against unobfuscated names; anything that no longer exists is
+# silently dropped, so this file is safe to keep as the code evolves. Kept deliberately
+# small and focused on app startup + the voice loop entry points.
+HSPLcom/elthon/broexe/MainActivity;-><init>()V
+HSPLcom/elthon/broexe/MainActivity;->onCreate(Landroid/os/Bundle;)V
+HSPLcom/elthon/broexe/BroExeApp;-><init>()V
+HSPLcom/elthon/broexe/BroExeApp;->onCreate()V
+HSPLcom/elthon/broexe/ui/**->**(**)**
+HSPLcom/elthon/broexe/voice/VoiceService;->**(**)**
+HSPLcom/elthon/broexe/voice/VoiceSession;->**(**)**
