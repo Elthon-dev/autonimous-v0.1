@@ -259,7 +259,8 @@ class VoiceSession(
                 }
 
                 if (!vad.isSpeaking()) {
-                    when (assembler.onPause(now)) {
+                    val complete = lastPartial.isNotBlank() && SemanticTurnEnd.looksComplete(lastPartial)
+                    when (assembler.onPause(now, complete)) {
                         HoldDecision.FINALIZE ->
                             return finishUtterance(asr, active, startedAt, now, assembler.speechMs, hint)
 
@@ -566,11 +567,12 @@ class VoiceSession(
             VoiceDiagnostics.event("ai", "no chat model available; cannot answer")
             return ""
         }
-        val systemPrompt = if (results != null) {
+        val basePrompt = if (results != null) {
             LlmResponder.SEARCH_SYSTEM_PROMPT
         } else {
             LlmResponder.SYSTEM_PROMPT
         }
+        val systemPrompt = TimeContext.systemPrompt(basePrompt)
         val outcome = try {
             responder.ensureLoaded(active.file, systemPrompt)
         } catch (t: Throwable) {
@@ -605,7 +607,19 @@ class VoiceSession(
                 append(question)
             }
         }
-        return responder.answer(prompt)
+        val draft = responder.answer(prompt, thinking = active.model.thinking)
+        if (draft.isBlank() ||
+            !ReflectionPolicy.shouldReflect(question, results != null, facts.isNotEmpty())
+        ) {
+            return draft
+        }
+        // Bounded self-review: exactly one extra decode, only for grounded/complex turns.
+        VoiceDiagnostics.event("ai", "self-review pass")
+        val improved = responder.answer(
+            ReflectionPolicy.reviewPrompt(question, draft),
+            thinking = active.model.thinking,
+        )
+        return improved.ifBlank { draft }
     }
 
     private fun nextId(): String = "u" + (++utteranceSeq)
