@@ -16,7 +16,7 @@ env:
 
 jobs:
   # Blocking gate: prove the exact GGUF shipped inside the APK (Qwen2.5-0.5B-Instruct
-  # Q4_K_M) loads and answers cleanly on the pinned llama.cpp revision, with no
+  # Q6_K) loads and answers cleanly on the pinned llama.cpp revision, with no
   # reasoning/tool-control token leakage. Uses the script's defaults.
   model-smoke:
     name: Native LLM model smoke test (shipped Qwen2.5-0.5B)
@@ -78,8 +78,8 @@ jobs:
         run: bash scripts/llm_smoke_test.sh
 
   # Non-reasoning ChatML candidates (Qwen2.5 Instruct): no think tokens at all,
-  # so they fit our existing template path unchanged. The 0.5B (491 MB, RAM-safe on
-  # a 3 GB device) is the shipped model, gated by `model-smoke` above; the 1.5B passes
+  # so they fit our existing template path unchanged. The 0.5B (620 MB Q6_K, RAM-safe
+  # on a 3 GB device) is the shipped model, gated by `model-smoke` above; the 1.5B passes
   # too but is left here as a documented, larger alternative we do not ship.
   model-smoke-qwen25-15b:
     name: Qwen2.5-1.5B-Instruct candidate smoke test
@@ -272,27 +272,27 @@ jobs:
           for f in \
             assets/voice/keywords.txt \
             assets/voice/licenses/Qwen2.5-0.5B-Instruct-Apache-2.0.txt \
-            assets/voice/models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
+            assets/voice/models/qwen2.5-0.5b-instruct-q6_k.gguf \
             assets/voice/models/kws/encoder.int8.onnx \
             assets/voice/models/kws/tokens.txt \
             assets/voice/models/asr/encoder.int8.onnx \
             assets/voice/models/asr/tokens.txt \
-            assets/voice/models/tts/en_US-amy-low.onnx ; do
+            assets/voice/models/tts/en_US-ryan-low.onnx ; do
             unzip -l "$APK" | grep -qF "$f" || { echo "MISSING: $f"; exit 1; }
           done
           echo "all expected voice assets present"
 
           echo "== PROOF: the APK embeds the verified Qwen GGUF (no download needed) =="
-          GGUF_IN_APK=assets/voice/models/qwen2.5-0.5b-instruct-q4_k_m.gguf
-          PINNED_SHA=74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db
-          PINNED_BYTES=491400032
+          GGUF_IN_APK=assets/voice/models/qwen2.5-0.5b-instruct-q6_k.gguf
+          PINNED_SHA=2f82233630c349ccf6b8daccf48f9a7865713d9f08a2eadfa456cebe9b97c7f5
+          PINNED_BYTES=650379104
           unzip -p "$APK" "$GGUF_IN_APK" > /tmp/embedded.gguf
           GOT_BYTES=$(wc -c < /tmp/embedded.gguf)
           GOT_SHA=$(sha256sum /tmp/embedded.gguf | awk '{print $1}')
           echo "embedded bytes=$GOT_BYTES sha256=$GOT_SHA"
           [ "$GOT_BYTES" = "$PINNED_BYTES" ] || { echo "FAIL: embedded GGUF size $GOT_BYTES != $PINNED_BYTES"; exit 1; }
           [ "$GOT_SHA" = "$PINNED_SHA" ] || { echo "FAIL: embedded GGUF sha256 mismatch"; exit 1; }
-          echo "PROOF OK: APK ships the exact pinned Qwen2.5-0.5B-Instruct Q4_K_M GGUF."
+          echo "PROOF OK: APK ships the exact pinned Qwen2.5-0.5B-Instruct Q6_K GGUF."
 
           echo "== PROOF: no on-device LLM download path remains in the ai package =="
           if grep -RInE 'OkHttp|ModelDownloader|ModelStore|isDownloadable|DOWNLOADED|\.download\(' \
@@ -301,6 +301,33 @@ jobs:
             exit 1
           fi
           echo "PROOF OK: the ai package has no model network/download code."
+
+      - name: Build release APK (R8 full mode + resource shrink + baseline profile)
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Verify release APK (shrinking kept the shipped brain + voice + profile)
+        run: |
+          set -euo pipefail
+          APK=app/build/outputs/apk/release/app-release-unsigned.apk
+          ls -la "$APK"
+          unzip -l "$APK" | grep -qF 'assets/voice/models/qwen2.5-0.5b-instruct-q6_k.gguf' \
+            || { echo "MISSING: shipped GGUF was stripped from the release APK"; exit 1; }
+          unzip -l "$APK" | grep -qF 'assets/voice/models/tts/en_US-ryan-low.onnx' \
+            || { echo "MISSING: shipped TTS was stripped from the release APK"; exit 1; }
+          if unzip -l "$APK" | grep -q 'assets/dexopt/baseline.prof'; then
+            echo "baseline profile packaged: assets/dexopt/baseline.prof"
+          else
+            echo "WARN: assets/dexopt/baseline.prof absent (profile may have been ignored)"
+          fi
+          echo "PROOF OK: release APK builds under R8 full mode and still ships model + voice."
+
+      - name: Upload release APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bro-exe-release-apk
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: warn
 
       - name: Upload unit test reports
         if: always()
