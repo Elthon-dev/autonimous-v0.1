@@ -63,11 +63,14 @@ class VoiceActivityDetector(
                 return VadEvent.SPEECH_START
             }
             if (adaptNoiseFloor) {
-                // Slow EMA so a burst of noise does not instantly raise the floor.
-                noiseFloor = if (noiseFloor == INITIAL_NOISE_FLOOR) {
-                    rms.coerceAtLeast(0f)
-                } else {
-                    noiseFloor * 0.97f + rms.coerceAtLeast(0f) * 0.03f
+                val r = rms.coerceAtLeast(0f)
+                noiseFloor = when {
+                    // First non-speech frame seeds the floor at the ambient level.
+                    noiseFloor == INITIAL_NOISE_FLOOR -> r
+                    // Room got quieter: fall quickly so the detector re-sensitises.
+                    r < noiseFloor -> noiseFloor * (1f - FALL_RATE) + r * FALL_RATE
+                    // Room got noisier: creep up slowly so one bang does not deafen it.
+                    else -> noiseFloor * (1f - RISE_RATE) + r * RISE_RATE
                 }
             }
             return VadEvent.NONE
@@ -102,6 +105,12 @@ class VoiceActivityDetector(
 
         /** The speech threshold floats at least this many times above the noise floor. */
         const val DEFAULT_NOISE_MULTIPLIER = 3.0f
+
+        /** Blend used when ambient noise rises: slow, so a transient bang cannot raise it. */
+        private const val RISE_RATE = 0.03f
+
+        /** Blend used when ambient noise falls: faster, so the mic re-sensitises promptly. */
+        private const val FALL_RATE = 0.20f
 
         private const val INITIAL_NOISE_FLOOR = 0.005f
     }

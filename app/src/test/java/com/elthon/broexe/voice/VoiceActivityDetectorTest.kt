@@ -60,6 +60,19 @@ class VoiceActivityDetectorTest {
     }
 
     @Test
+    fun floorRecoversQuicklyWhenTheRoomGoesQuietAgain() {
+        val vad = VoiceActivityDetector()
+        // First non-speech frame seeds the floor at the ambient level (just under the
+        // start threshold, so it is not mistaken for speech).
+        vad.process(0.019f, 0L)
+        assertTrue("floor seeded near ambient", vad.floor > 0.015f)
+        // The room goes silent: the asymmetric fall must drop the floor most of the way
+        // within a handful of frames (the old symmetric EMA would still be ~0.014).
+        repeat(10) { vad.process(0.0f, 100L + it * 100L) }
+        assertTrue("floor fell back toward silence", vad.floor < 0.005f)
+    }
+
+    @Test
     fun nonAdaptiveKeepsFixedThreshold() {
         val vad = VoiceActivityDetector(adaptNoiseFloor = false)
         repeat(30) { vad.process(0.01f, it * 100L) }

@@ -17,7 +17,8 @@ class UtteranceAssemblerTest {
         maxUtteranceMs: Long = 10_000L,
         continuationGraceMs: Long = 800L,
         extendedGraceMs: Long = 1_800L,
-    ) = UtteranceAssembler(minSpeechMs, maxUtteranceMs, continuationGraceMs, extendedGraceMs)
+        semanticGraceMs: Long = 450L,
+    ) = UtteranceAssembler(minSpeechMs, maxUtteranceMs, continuationGraceMs, extendedGraceMs, semanticGraceMs)
 
     @Test
     fun notCapturingPauseIsDiscard() {
@@ -79,6 +80,28 @@ class UtteranceAssemblerTest {
         assertFalse(a.exceededMax(9_000L))
         assertTrue(a.exceededMax(10_000L))
         assertTrue(a.exceededMax(12_000L))
+    }
+
+    @Test
+    fun completeSentenceFinalizesAtTheShortSemanticGrace() {
+        val a = assembler(continuationGraceMs = 800L, semanticGraceMs = 450L)
+        a.begin(0L)
+        a.onVoice(300L)
+        // 300 ms of silence: too short even for the semantic grace.
+        assertEquals(HoldDecision.HOLD, a.onPause(600L, complete = true))
+        // 500 ms of silence with a finished-looking partial: finalize without the
+        // full 800 ms continuation tolerance.
+        assertEquals(HoldDecision.FINALIZE, a.onPause(800L, complete = true))
+    }
+
+    @Test
+    fun incompletePartialKeepsTheLongerGrace() {
+        val a = assembler(continuationGraceMs = 800L, semanticGraceMs = 450L)
+        a.begin(0L)
+        a.onVoice(300L)
+        // Same 400 ms pause, but the user trailed off: keep waiting.
+        assertEquals(HoldDecision.HOLD, a.onPause(700L, complete = false))
+        assertEquals(HoldDecision.FINALIZE, a.onPause(1_100L, complete = false))
     }
 
     @Test

@@ -36,6 +36,7 @@ class UtteranceAssembler(
     private val maxUtteranceMs: Long = DEFAULT_MAX_UTTERANCE_MS,
     private val continuationGraceMs: Long = DEFAULT_CONTINUATION_GRACE_MS,
     private val extendedGraceMs: Long = DEFAULT_EXTENDED_GRACE_MS,
+    private val semanticGraceMs: Long = DEFAULT_SEMANTIC_GRACE_MS,
 ) {
     private var startedAt = Long.MIN_VALUE
     private var lastVoiceAt = Long.MIN_VALUE
@@ -69,10 +70,18 @@ class UtteranceAssembler(
     /**
      * The pause after the last voiced frame is being evaluated; decide whether to keep
      * the turn open. Safe to call on every silent frame.
+     *
+     * @param complete when the in-flight partial transcript already looks like a finished
+     *   sentence (see [SemanticTurnEnd]), the shorter [semanticGraceMs] applies so a
+     *   clearly-finished request is answered without the full pause tolerance.
      */
-    fun onPause(now: Long): HoldDecision {
+    fun onPause(now: Long, complete: Boolean = false): HoldDecision {
         if (!isCapturing) return HoldDecision.DISCARD
-        val grace = if (extended) extendedGraceMs else continuationGraceMs
+        val grace = when {
+            complete -> semanticGraceMs
+            extended -> extendedGraceMs
+            else -> continuationGraceMs
+        }
         if (now - lastVoiceAt < grace) return HoldDecision.HOLD
         return if (speechMs >= minSpeechMs) HoldDecision.FINALIZE else HoldDecision.DISCARD
     }
@@ -108,5 +117,11 @@ class UtteranceAssembler(
 
         /** The wider tolerance used once the turn already looks addressed. */
         const val DEFAULT_EXTENDED_GRACE_MS = 1_800L
+
+        /**
+         * The shorter tolerance used once the partial transcript already looks like a
+         * finished sentence: a clear request is not made to wait the full pause.
+         */
+        const val DEFAULT_SEMANTIC_GRACE_MS = 450L
     }
 }

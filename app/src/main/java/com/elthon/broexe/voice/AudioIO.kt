@@ -25,6 +25,13 @@ const val SAMPLE_RATE = 16000
 /** ~100 ms frames keep activation latency low without spinning the CPU. */
 private const val FRAME_SAMPLES = SAMPLE_RATE / 10
 
+/**
+ * AudioRecord ring-buffer headroom, in frames. ~1.6 s at 100 ms frames: enough to
+ * absorb a GC pause or a slow disk read without dropping captured audio, which on a
+ * starved HAL looks exactly like "the wake word never fires".
+ */
+private const val RECORD_BUFFER_FRAMES = 16
+
 /** Raised when the microphone cannot be opened or read — surfaced, never swallowed. */
 class AudioCaptureException(message: String) : IllegalStateException(message)
 
@@ -47,7 +54,7 @@ class AudioInput {
         SAMPLE_RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT
     )
 
-    private val bufferBytes = max(minBuffer, FRAME_SAMPLES * 2 * 4)
+    private val bufferBytes = max(minBuffer, FRAME_SAMPLES * 2 * RECORD_BUFFER_FRAMES)
 
     @SuppressLint("MissingPermission") // guarded by the caller after RECORD_AUDIO is granted
     private val record = AudioRecord(
