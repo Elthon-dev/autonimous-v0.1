@@ -53,6 +53,7 @@ import com.elthon.broexe.voice.DetectionConfig
 import com.elthon.broexe.voice.DetectionConfigStore
 import com.elthon.broexe.voice.DiagnosticsSnapshot
 import com.elthon.broexe.voice.InsufficientStorageException
+import com.elthon.broexe.voice.KeepAlive
 import com.elthon.broexe.voice.ModelIntegrityException
 import com.elthon.broexe.voice.VoiceDiagnostics
 import com.elthon.broexe.voice.VoiceService
@@ -150,6 +151,9 @@ private fun DiagnosticsScreen(modifier: Modifier = Modifier) {
         Spacer(Modifier.height(16.dp))
 
         DetectionSettingsSection(locked = isOn)
+        Spacer(Modifier.height(16.dp))
+
+        ReliabilitySection()
         Spacer(Modifier.height(16.dp))
 
         ModelStatusCard()
@@ -295,6 +299,41 @@ private fun DetectionSettingsSection(locked: Boolean) {
     Text(
         text = "Ask for a question, or just say \u201cBro\u201d — anything addressed to Bro works. " +
             "High confidence starts a conversation; the middle band is decided by the policy above.",
+        style = MaterialTheme.typography.bodySmall,
+        color = Grey,
+    )
+}
+
+/**
+ * Honest controls for surviving aggressive OEM power management. We never pretend we can
+ * guarantee background listening: we ask the OS for the exemption and show the truth.
+ */
+@Composable
+private fun ReliabilitySection() {
+    val context = LocalContext.current
+    var autoStart by remember { mutableStateOf(KeepAlive.autoStart(context)) }
+    var exempt by remember { mutableStateOf(KeepAlive.isExemptFromBatteryOptimizations(context)) }
+
+    Text("Listening reliability", style = MaterialTheme.typography.labelLarge)
+    Spacer(Modifier.height(4.dp))
+
+    ToggleRow("Resume after reboot", autoStart, true) {
+        autoStart = it
+        KeepAlive.setAutoStart(context, it)
+    }
+    OutlinedButton(
+        onClick = {
+            KeepAlive.requestBatteryExemption(context)
+            exempt = KeepAlive.isExemptFromBatteryOptimizations(context)
+        },
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Text(if (exempt) "Battery optimization: exempt" else "Ignore battery optimization")
+    }
+    Spacer(Modifier.height(4.dp))
+    Text(
+        text = "ColorOS and similar builds freeze idle apps. Exempting Bro.exe keeps the " +
+            "wake word armed; the ongoing notification is the honest way to stop it.",
         style = MaterialTheme.typography.bodySmall,
         color = Grey,
     )

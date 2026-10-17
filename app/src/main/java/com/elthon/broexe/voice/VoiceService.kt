@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -33,8 +34,10 @@ import kotlinx.coroutines.launch
  * Also hosts the standalone stage tests (`ACTION_TEST`) so they can borrow the
  * real engines while Voice Mode is OFF.
  *
- * Started only from the visible activity after RECORD_AUDIO is granted. Returns
- * START_NOT_STICKY: the microphone must never be resurrected behind the user's back.
+ * Started only from the visible activity after RECORD_AUDIO is granted, or from the
+ * tap-to-resume notification after a reboot. While a live session is up it returns
+ * START_STICKY so an aggressive OEM that kills the process lets the OS bring the
+ * listener back; explicit Stop and the stage tests stay START_NOT_STICKY.
  */
 class VoiceService : Service() {
 
@@ -46,6 +49,7 @@ class VoiceService : Service() {
         },
     )
     private var session: VoiceSession? = null
+    private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -54,36 +58,43 @@ class VoiceService : Service() {
         createChannel()
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int =
         when (intent?.action) {
             ACTION_STOP -> {
                 stopSelf()
-                return START_NOT_STICKY
+                START_NOT_STICKY
             }
             ACTION_TEST -> {
                 startTest(intent)
-                return START_NOT_STICKY
+                START_NOT_STICKY
             }
-            else -> startVoice()
+            else -> if (startVoice()) START_STICKY else START_NOT_STICKY
         }
-        return START_NOT_STICKY
-    }
 
-    private fun startVoice() {
-        if (session != null) return
+    private fun startVoice(): Boolean {
+        if (session != null) return true
         if (!hasMicPermission()) {
             _detail.value = "Microphone permission is needed."
             _state.value = VoiceState.ERROR
             stopSelf()
-            return
+            return false
         }
 
-        ServiceCompat.startForeground(
-            this,
-            NOTIFICATION_ID,
-            buildNotification(VoiceState.LOADING_AI.label()),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
-        )
+        val started = runCatching {
+            ServiceCompat.startForeground(
+                this,
+                NOTIFICATION_ID,
+                buildNotification(VoiceState.LOADING_AI.label()),
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+            )
+        }.isSuccess
+        if (!started) {
+            // A sticky restart from the background can be refused; don't fight the OS.
+            VoiceDiagnostics.onError("Could not start the microphone service")
+            stopSelf()
+            return false
+        }
+        acquireWakeLock()
 
         _state.value = VoiceState.LOADING_AI
         scope.launch {
@@ -132,6 +143,7 @@ class VoiceService : Service() {
                 stopSelf()
             }
         }
+        return true
     }
 
     /**
@@ -185,9 +197,39 @@ class VoiceService : Service() {
         ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
             PackageManager.PERMISSION_GRANTED
 
+    /**
+     * Keep the CPU awake while we listen: without this, the device sleeps and the mic
+     * stream starves even though the foreground service is still alive.
+     */
+    private fun acquireWakeLock() {
+        if (wakeLock != null) return
+        val pm = getSystemService(PowerManager::class.java) ?: return
+        wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "broexe:listening").apply {
+            setReferenceCounted(false)
+            runCatching { acquire() }
+        }
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.let { wl -> runCatching { if (wl.isHeld) wl.release() } }
+        wakeLock = null
+    }
+
+    /**
+     * Swiping the app off Recents must not silently disable the wake word. The ongoing
+     * notification is the honest, visible way to stop listening — so we keep going.
+     */
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        if (session != null) {
+            VoiceDiagnostics.event("service", "app swiped away; keeping the listener up")
+        }
+        super.onTaskRemoved(rootIntent)
+    }
+
     override fun onDestroy() {
         session?.stop()
         session = null
+        releaseWakeLock()
         scope.cancel()
         _state.value = VoiceState.OFF
         super.onDestroy()
