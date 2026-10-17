@@ -17,7 +17,7 @@ class ModelManagerTest {
 
     private val model = LlmCatalog.default
 
-    /** A file that exists at exactly the model's expected size, without writing 469 MB. */
+    /** A file that exists at exactly the model's expected size, without writing 620 MB. */
     private fun sizedFile(length: Long): File =
         File(tmp.root, model.fileName).apply {
             RandomAccessFile(this, "rw").use { it.setLength(length) }

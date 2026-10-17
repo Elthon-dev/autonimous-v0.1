@@ -11,11 +11,11 @@ class LlmModelTest {
     @Test
     fun defaultIsTheBundledQwenAndPointsAtThePackagedAsset() {
         val m = LlmCatalog.default
-        assertEquals("qwen2.5-0.5b-instruct-q4_k_m", m.id)
+        assertEquals("qwen2.5-0.5b-instruct-q6_k", m.id)
         assertEquals("qwen2", m.arch)
-        assertEquals("voice/models/qwen2.5-0.5b-instruct-q4_k_m.gguf", m.bundledAsset)
-        assertEquals("qwen2.5-0.5b-instruct-q4_k_m.gguf", m.fileName)
-        assertEquals(491_400_032L, m.sizeBytes)
+        assertEquals("voice/models/qwen2.5-0.5b-instruct-q6_k.gguf", m.bundledAsset)
+        assertEquals("qwen2.5-0.5b-instruct-q6_k.gguf", m.fileName)
+        assertEquals(650_379_104L, m.sizeBytes)
         assertEquals(64, m.sha256.length)
         assertTrue("sha must be 64 lowercase hex", m.sha256.matches(Regex("[0-9a-f]{64}")))
         assertEquals("Apache-2.0", m.license)
@@ -48,6 +48,6 @@ class LlmModelTest {
 
     @Test
     fun sizeLabelIsHumanReadable() {
-        assertEquals("469 MB", LlmCatalog.QWEN25_0_5B_INSTR.sizeLabel())
+        assertEquals("620 MB", LlmCatalog.QWEN25_0_5B_INSTR.sizeLabel())
     }
 }

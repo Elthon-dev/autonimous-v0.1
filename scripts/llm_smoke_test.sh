@@ -9,13 +9,13 @@ set -euo pipefail
 LLAMA_REF="${LLAMA_REF:-358a420ec4ed59b6b0be08b1d1f71dd478b99a99}"
 
 # Model under test. Defaults to the model shipped in the APK (Qwen2.5-0.5B-Instruct
-# Q4_K_M); override via env to smoke a candidate model (e.g. Qwen3.5-0.8B) without
+# Q6_K); override via env to smoke a candidate model (e.g. Qwen3.5-0.8B) without
 # editing this file.
 LABEL="${LABEL:-qwen2505b}"
-MODEL_NAME="${MODEL_NAME:-qwen2.5-0.5b-instruct-q4_k_m.gguf}"
+MODEL_NAME="${MODEL_NAME:-qwen2.5-0.5b-instruct-q6_k.gguf}"
 MODEL_URL="${MODEL_URL:-https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/${MODEL_NAME}}"
-MODEL_SHA256="${MODEL_SHA256:-74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db}"
-EXPECTED_BYTES="${EXPECTED_BYTES:-491400032}"
+MODEL_SHA256="${MODEL_SHA256:-2f82233630c349ccf6b8daccf48f9a7865713d9f08a2eadfa456cebe9b97c7f5}"
+EXPECTED_BYTES="${EXPECTED_BYTES:-650379104}"
 # Extra comma-separated substrings that must never leak into a spoken answer
 # (e.g. reasoning/vision template artifacts for a specific model family).
 EXTRA_BANNED="${EXTRA_BANNED:-<think,</think,reasoning}"

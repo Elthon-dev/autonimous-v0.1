@@ -50,7 +50,7 @@ class VoicePaths private constructor(val root: File) {
     val asrJoiner: File get() = File(root, "models/asr/joiner.int8.onnx")
     val asrTokens: File get() = File(root, "models/asr/tokens.txt")
 
-    val ttsModel: File get() = File(root, "models/tts/en_US-amy-low.onnx")
+    val ttsModel: File get() = File(root, "models/tts/en_US-ryan-low.onnx")
     val ttsTokens: File get() = File(root, "models/tts/tokens.txt")
     val ttsDataDir: File get() = File(root, "models/tts/espeak-ng-data")
 
@@ -89,16 +89,16 @@ class VoicePaths private constructor(val root: File) {
     }
 
     companion object {
-        private const val LLM_REL = "models/qwen2.5-0.5b-instruct-q4_k_m.gguf"
+        private const val LLM_REL = "models/qwen2.5-0.5b-instruct-q6_k.gguf"
 
         /**
          * Rough extraction footprint with headroom for the staging copy. The staged tree
-         * is ~610 MB (the 469 MB GGUF dominates); a re-extract briefly holds the old tree
+         * is ~730 MB (the 620 MB GGUF dominates); a re-extract briefly holds the old tree
          * plus the new one, so we ask for more than the tree alone.
          */
-        const val REQUIRED_BYTES: Long = 720L * MB
+        const val REQUIRED_BYTES: Long = 950L * MB
 
-        private const val EXTRACT_VERSION = "voice-assets-v3"
+        private const val EXTRACT_VERSION = "voice-assets-v4"
 
         private const val ASSET_ROOT = "voice"
         private const val DIR_NAME = "voice"
@@ -116,7 +116,7 @@ class VoicePaths private constructor(val root: File) {
          *
          * @param llmSha256 when non-null, the copied GGUF is verified against this hash
          *   before the extraction is marked ready. The hash is recorded in the marker, so
-         *   later launches trust the already-verified copy without re-hashing 460 MB.
+         *   later launches trust the already-verified copy without re-hashing 620 MB.
          * @param onProgress optional truthful progress callback (copied bytes, total bytes)
          *   invoked while copying the asset tree.
          * @throws InsufficientStorageException when there is not enough free space.
