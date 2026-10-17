@@ -139,11 +139,20 @@ object VoiceSelfTest {
         CrashReporter.clearNativeInit(context)
         val vad = VoiceActivityDetector()
         val preRoll = AudioRingBuffer(15)
+        CrashReporter.markNativeInit(context, "vad")
+        val ehs = EhsGate(silero = EhsSilero.create(paths))
+        CrashReporter.clearNativeInit(context)
+        VoiceDiagnostics.event(
+            "ehs",
+            if (ehs.usesSilero) "EHS: energy + Silero VAD" else "EHS: energy only",
+        )
         input.start()
         val end = SystemClock.elapsedRealtime() + seconds * 1000L
         var capturing = false
         var startedAt = 0L
         var stream: OnlineStream? = null
+        var ehsBest: EhsDecision? = null
+        var ehsClarity = 0
         try {
             while (SystemClock.elapsedRealtime() < end) {
                 val f = input.readFrame()
@@ -151,6 +160,9 @@ object VoiceSelfTest {
                 val now = SystemClock.elapsedRealtime()
                 val level = audioLevel(f)
                 VoiceDiagnostics.onFrame(level, audioPeak(f))
+                val decision = ehs.onFrame(f)
+                if (ehs.lastClarity > ehsClarity) ehsClarity = ehs.lastClarity
+                if (ehsBest == null || decision.ordinal > ehsBest!!.ordinal) ehsBest = decision
                 if (!capturing) {
                     preRoll.add(f, now)
                     if (vad.process(level, now) == VadEvent.SPEECH_START) {
@@ -174,6 +186,8 @@ object VoiceSelfTest {
                             speechMs = dur,
                             asrConfidence = conf,
                             standaloneBro = true,
+                            ehsDecision = ehsBest,
+                            ehsClarity = ehsClarity,
                         )
                         val signal = AddressingDetector.evaluate(text, ctx)
                         val result = ActivationDecider().decide(signal, ctx, "self-test", now)
@@ -196,6 +210,7 @@ object VoiceSelfTest {
             input.stop()
             input.release()
             transcriber.release()
+            ehs.release()
         }
         VoiceDiagnostics.event("detect", "self-test: no utterance in ${seconds}s")
         return null

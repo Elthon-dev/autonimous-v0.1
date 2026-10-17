@@ -179,4 +179,33 @@ class AddressingDetectorTest {
             assertTrue("score in range for \u201c$t\u201d", s in 0f..1f)
         }
     }
+
+    // --- EHS acoustic gate -----------------------------------------------------
+
+    @Test
+    fun ehsTargetRaisesScoreAndReportsReason() {
+        val plain = score("what's the weather?")
+        val target = score(
+            "what's the weather?",
+            DetectionContext(ehsDecision = EhsDecision.TARGET, ehsClarity = 70),
+        )
+        assertTrue("EHS TARGET raises the score", target > plain)
+        assertTrue(
+            AddressingDetector.evaluate("what's the weather?", DetectionContext(ehsDecision = EhsDecision.TARGET))
+                .reasonString()
+                .contains("ehs-target"),
+        )
+    }
+
+    @Test
+    fun ehsNoisePenalizesScore() {
+        val clean = score("what's the weather?", DetectionContext(ehsDecision = EhsDecision.SPEECH))
+        val noisy = score("what's the weather?", DetectionContext(ehsDecision = EhsDecision.NOISE))
+        assertTrue("EHS NOISE lowers the score", noisy < clean)
+    }
+
+    @Test
+    fun ehsAbsentIsNeutral() {
+        assertEquals(score("what's the weather?"), score("what's the weather?", DetectionContext()), 0.0001f)
+    }
 }

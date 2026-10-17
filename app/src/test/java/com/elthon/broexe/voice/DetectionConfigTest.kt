@@ -12,6 +12,7 @@ class DetectionConfigTest {
         assertTrue(d.standaloneBro)
         assertTrue(d.bargeIn)
         assertTrue(!d.ambiguousClarify)
+        assertTrue(d.ehsEnabled)
         assertTrue(d.highThreshold >= d.ambiguousThreshold)
     }
 

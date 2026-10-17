@@ -27,6 +27,8 @@ private data class Utterance(
     val endedAt: Long,
     val speechMs: Long,
     val keywordHit: String? = null,
+    val ehsDecision: EhsDecision? = null,
+    val ehsClarity: Int = 0,
 )
 
 /**
@@ -91,6 +93,7 @@ class VoiceSession(
     suspend fun run() {
         var asr: CommandTranscriber? = null
         var hint: KeywordHint? = null
+        var ehs: EhsGate? = null
         try {
             CrashReporter.markNativeInit(context, "asr")
             val transcriber = CommandTranscriber(paths)
@@ -116,6 +119,19 @@ class VoiceSession(
                     .getOrNull()
             }
 
+            if (config.ehsEnabled) {
+                CrashReporter.markNativeInit(context, "vad")
+                val gate = EhsGate(silero = EhsSilero.create(paths))
+                CrashReporter.clearNativeInit(context)
+                ehs = gate
+                VoiceDiagnostics.event(
+                    "ehs",
+                    if (gate.usesSilero) "EHS on (energy + Silero VAD)" else "EHS on (energy only)",
+                )
+            } else {
+                VoiceDiagnostics.event("ehs", "EHS off")
+            }
+
             audioIn.start()
             VoiceDiagnostics.setEchoCancellation(audioIn.echoCancellationActive)
             VoiceDiagnostics.event(
@@ -131,7 +147,7 @@ class VoiceSession(
                 try {
                     onDetail(null)
                     onState(if (session.isActive()) VoiceState.LISTENING else VoiceState.IDLE)
-                    val utterance = awaitSpeech(transcriber, session, config, hint) ?: break
+                    val utterance = awaitSpeech(transcriber, session, config, hint, ehs) ?: break
                     handleUtterance(utterance, transcriber, config, decider, session)
                 } catch (e: CancellationException) {
                     throw e
@@ -160,6 +176,7 @@ class VoiceSession(
             }
         } finally {
             runCatching { hint?.release() }
+            runCatching { ehs?.release() }
             runCatching { audioIn.stop() }
             runCatching { audioIn.release() }
             runCatching { asr?.release() }
@@ -186,6 +203,7 @@ class VoiceSession(
         session: ConversationSession,
         config: DetectionConfig,
         hint: KeywordHint?,
+        ehs: EhsGate?,
     ): Utterance? {
         val vad = VoiceActivityDetector()
         val preRoll = AudioRingBuffer(PRE_ROLL_FRAMES)
@@ -198,6 +216,8 @@ class VoiceSession(
         var startedAt = 0L
         var lastPartialAt = 0L
         var lastPartial = ""
+        var ehsBest: EhsDecision? = null
+        var ehsClarity = 0
 
         try {
             while (running) {
@@ -207,6 +227,12 @@ class VoiceSession(
                 val level = audioLevel(frame)
                 VoiceDiagnostics.onFrame(level, audioPeak(frame))
                 hint?.feed(frame)
+
+                if (ehs != null) {
+                    val decision = ehs.onFrame(frame, coreWord = hint?.peek() != null)
+                    if (ehs.lastClarity > ehsClarity) ehsClarity = ehs.lastClarity
+                    if (ehsBest == null || decision.ordinal > ehsBest!!.ordinal) ehsBest = decision
+                }
 
                 if (!assembler.isCapturing) {
                     if (session.tick(now)) onState(VoiceState.IDLE)
@@ -242,7 +268,7 @@ class VoiceSession(
                         VoiceDiagnostics.event("asr~", partial)
                         val signal = AddressingDetector.evaluate(
                             partial,
-                            provisionalContext(session, config, assembler, now),
+                            provisionalContext(session, config, assembler, now, ehsBest, ehsClarity),
                         )
                         if (signal.score >= config.highThreshold) {
                             if (!assembler.graceExtended) {
@@ -258,6 +284,7 @@ class VoiceSession(
 
                 if (assembler.exceededMax(now)) {
                     return finishUtterance(asr, active, startedAt, now, assembler.speechMs, hint)
+                        .copy(ehsDecision = ehsBest, ehsClarity = ehsClarity)
                 }
 
                 if (!vad.isSpeaking()) {
@@ -265,6 +292,7 @@ class VoiceSession(
                     when (assembler.onPause(now, complete)) {
                         HoldDecision.FINALIZE ->
                             return finishUtterance(asr, active, startedAt, now, assembler.speechMs, hint)
+                                .copy(ehsDecision = ehsBest, ehsClarity = ehsClarity)
 
                         HoldDecision.DISCARD -> {
                             runCatching { active.release() }
@@ -290,6 +318,8 @@ class VoiceSession(
         config: DetectionConfig,
         assembler: UtteranceAssembler,
         now: Long,
+        ehsDecision: EhsDecision?,
+        ehsClarity: Int,
     ): DetectionContext = DetectionContext(
         inSession = session.isActive(),
         msSinceAssistantSpoke = session.msSinceAssistantSpoke(now),
@@ -297,6 +327,8 @@ class VoiceSession(
         speechMs = assembler.speechMs,
         standaloneBro = config.standaloneBro,
         keywordHit = null,
+        ehsDecision = ehsDecision,
+        ehsClarity = ehsClarity,
     )
 
     private fun finishUtterance(
@@ -325,6 +357,9 @@ class VoiceSession(
         onState(VoiceState.ACTIVATION_DECISION)
         val now = SystemClock.elapsedRealtime()
         VoiceDiagnostics.onAsr(utterance.text.ifBlank { "(nothing)" })
+        utterance.ehsDecision?.let {
+            VoiceDiagnostics.event("ehs", "${it.name.lowercase()} clarity=${utterance.ehsClarity}")
+        }
 
         if (utterance.text.isBlank()) {
             VoiceDiagnostics.onUtteranceRejected(
@@ -341,6 +376,8 @@ class VoiceSession(
             asrConfidence = utterance.confidence,
             standaloneBro = config.standaloneBro,
             keywordHit = utterance.keywordHit,
+            ehsDecision = utterance.ehsDecision,
+            ehsClarity = utterance.ehsClarity,
         )
         val signal = AddressingDetector.evaluate(utterance.text, ctx)
         val result = decider.decide(signal, ctx, utterance.id, now)
@@ -680,6 +717,9 @@ private class KeywordHint(context: Context, paths: VoicePaths) {
         lastHit = null
         return hit
     }
+
+    /** Non-consuming read of the most recent hit, for the EHS core-word signal. */
+    fun peek(): String? = lastHit
 
     fun release() {
         runCatching { stream.release() }

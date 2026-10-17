@@ -273,6 +273,9 @@ private fun DetectionSettingsSection(locked: Boolean) {
     ToggleRow("Keyword-spotter hint", cfg.keywordHint, !locked) {
         update(cfg.copy(keywordHint = it))
     }
+    ToggleRow("EHS acoustic gate", cfg.ehsEnabled, !locked) {
+        update(cfg.copy(ehsEnabled = it))
+    }
 
     Spacer(Modifier.height(8.dp))
     SliderRow("Activate threshold", cfg.highThreshold, 0.30f..0.90f, !locked) {

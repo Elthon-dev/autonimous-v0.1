@@ -35,3 +35,10 @@ file|models/asr/tokens.txt|https://huggingface.co/csukuangfj/sherpa-onnx-streami
 # Sherpa-onnx VITS needs tokens.txt + espeak-ng-data in addition to the .onnx,
 # so the whole converted model directory is extracted here.
 tardir|models/tts|https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_US-ryan-low-int8.tar.bz2|vits-piper-en_US-ryan-low-int8
+
+# --- Speech VAD (Silero VAD, fp32) -------------------------------------------
+# Used by the EHS gate as the high-accuracy speech confirmor behind a cheap
+# energy pre-filter. Silero v5 is the strongest on-device VAD (F1 ~0.99 vs
+# WebRTC ~0.85) and its JNI already ships inside our prebuilt libsherpa-onnx-jni,
+# so no native rebuild is needed. 16 kHz, window_size 512.
+file|models/vad/silero_vad.onnx|https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx|

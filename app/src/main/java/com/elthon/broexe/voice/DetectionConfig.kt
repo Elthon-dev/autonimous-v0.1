@@ -32,6 +32,12 @@ data class DetectionConfig(
     val ambiguousClarify: Boolean = false,
     /** Use a keyword-spotter hit as extra (non-decisive) evidence. */
     val keywordHint: Boolean = false,
+    /**
+     * Run the EHS (Extra High Sensitivity) acoustic gate on every background frame:
+     * energy pre-filter + optional Silero confirm, feeding a mild address signal. On by
+     * default; a user can switch it off if they want a quieter listener.
+     */
+    val ehsEnabled: Boolean = true,
 ) {
     /** Clamp out-of-range values that could come from corrupt prefs. */
     fun sanitized(): DetectionConfig = copy(
@@ -61,6 +67,7 @@ object DetectionConfigStore {
     private const val KEY_BARGE_IN = "barge_in"
     private const val KEY_CLARIFY = "ambiguous_clarify"
     private const val KEY_KEYWORD_HINT = "keyword_hint"
+    private const val KEY_EHS = "ehs_enabled"
 
     fun load(context: Context): DetectionConfig {
         val p = prefs(context)
@@ -75,6 +82,7 @@ object DetectionConfigStore {
             bargeIn = p.getBoolean(KEY_BARGE_IN, d.bargeIn),
             ambiguousClarify = p.getBoolean(KEY_CLARIFY, d.ambiguousClarify),
             keywordHint = p.getBoolean(KEY_KEYWORD_HINT, d.keywordHint),
+            ehsEnabled = p.getBoolean(KEY_EHS, d.ehsEnabled),
         ).sanitized()
     }
 
@@ -90,6 +98,7 @@ object DetectionConfigStore {
             .putBoolean(KEY_BARGE_IN, c.bargeIn)
             .putBoolean(KEY_CLARIFY, c.ambiguousClarify)
             .putBoolean(KEY_KEYWORD_HINT, c.keywordHint)
+            .putBoolean(KEY_EHS, c.ehsEnabled)
             .apply()
     }
 

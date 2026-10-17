@@ -18,6 +18,14 @@ data class DetectionContext(
     val standaloneBro: Boolean = true,
     /** Optional acoustical keyword hint (e.g. from a keyword spotter), if any. */
     val keywordHit: String? = null,
+    /**
+     * EHS acoustic verdict for this utterance, when the gate ran. `null` (the default)
+     * means "unknown" and leaves the classifier untouched, so behaviour is unchanged
+     * for callers that have not wired EHS in yet.
+     */
+    val ehsDecision: EhsDecision? = null,
+    /** EHS clarity score (0–100) for the loudest frame, when the gate ran. */
+    val ehsClarity: Int = 0,
 )
 
 /** The classifier's verdict for one utterance. */
@@ -81,6 +89,12 @@ object AddressingDetector {
     const val CONTEXT_CAP = 0.50f
 
     const val W_KEYWORD_HINT = 0.25f
+
+    // EHS acoustic gate: a mild nudge only, so it can never flip a decision the
+    // linguistic evidence already settled. Absent (null) EHS is a no-op.
+    const val W_EHS_TARGET = 0.15f
+    const val W_EHS_SPEECH = 0.08f
+    const val W_EHS_PENALTY = -0.10f
 
     const val SHORT_UTTERANCE_MS = 200L
     const val SHORT_UTTERANCE_MULTIPLIER = 0.60f
@@ -232,6 +246,23 @@ object AddressingDetector {
         if (!ctx.keywordHit.isNullOrBlank()) {
             score += W_KEYWORD_HINT
             reasons.add("keyword-hint")
+        }
+
+        // --- EHS acoustic gate (neutral when it did not run) ---
+        when (ctx.ehsDecision) {
+            EhsDecision.TARGET -> {
+                score += W_EHS_TARGET
+                reasons.add("ehs-target")
+            }
+            EhsDecision.SPEECH -> {
+                score += W_EHS_SPEECH
+                reasons.add("ehs-speech")
+            }
+            EhsDecision.NOISE, EhsDecision.QUIET -> {
+                score += W_EHS_PENALTY
+                reasons.add("ehs-" + ctx.ehsDecision.name.lowercase())
+            }
+            null -> Unit
         }
 
         // --- acoustic / recognition quality ---

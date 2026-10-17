@@ -277,10 +277,23 @@ jobs:
             assets/voice/models/kws/tokens.txt \
             assets/voice/models/asr/encoder.int8.onnx \
             assets/voice/models/asr/tokens.txt \
-            assets/voice/models/tts/en_US-ryan-low.onnx ; do
+            assets/voice/models/tts/en_US-ryan-low.onnx \
+            assets/voice/models/vad/silero_vad.onnx ; do
             unzip -l "$APK" | grep -qF "$f" || { echo "MISSING: $f"; exit 1; }
           done
           echo "all expected voice assets present"
+
+          echo "== PROOF: the APK ships the pinned Silero VAD (EHS confirmor) =="
+          VAD_IN_APK=assets/voice/models/vad/silero_vad.onnx
+          VAD_SHA=9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6
+          VAD_BYTES=643854
+          unzip -p "$APK" "$VAD_IN_APK" > /tmp/embedded_vad.onnx
+          VAD_GOT_BYTES=$(wc -c < /tmp/embedded_vad.onnx)
+          VAD_GOT_SHA=$(sha256sum /tmp/embedded_vad.onnx | awk '{print $1}')
+          echo "embedded vad bytes=$VAD_GOT_BYTES sha256=$VAD_GOT_SHA"
+          [ "$VAD_GOT_BYTES" = "$VAD_BYTES" ] || { echo "FAIL: embedded VAD size $VAD_GOT_BYTES != $VAD_BYTES"; exit 1; }
+          [ "$VAD_GOT_SHA" = "$VAD_SHA" ] || { echo "FAIL: embedded VAD sha256 mismatch"; exit 1; }
+          echo "PROOF OK: APK ships the exact pinned Silero VAD used by the EHS gate."
 
           echo "== PROOF: the APK embeds the verified Qwen GGUF (no download needed) =="
           GGUF_IN_APK=assets/voice/models/qwen2.5-0.5b-instruct-q6_k.gguf

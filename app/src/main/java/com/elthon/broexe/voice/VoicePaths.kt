@@ -54,11 +54,15 @@ class VoicePaths private constructor(val root: File) {
     val ttsTokens: File get() = File(root, "models/tts/tokens.txt")
     val ttsDataDir: File get() = File(root, "models/tts/espeak-ng-data")
 
+    /** Silero VAD, used by the EHS gate as the high-accuracy speech confirmor. */
+    val vadModel: File get() = File(root, "models/vad/silero_vad.onnx")
+
     /** Every file that must exist before the engines can start. */
     fun requiredFiles(): List<File> = listOf(
         llm, kwsEncoder, kwsDecoder, kwsJoiner, kwsTokens, keywords,
         asrEncoder, asrDecoder, asrJoiner, asrTokens,
         ttsModel, ttsTokens,
+        vadModel,
     )
 
     fun isReady(): Boolean = requiredFiles().all { it.isFile && it.length() > 0L } && ttsDataDir.isDirectory
@@ -98,7 +102,7 @@ class VoicePaths private constructor(val root: File) {
          */
         const val REQUIRED_BYTES: Long = 950L * MB
 
-        private const val EXTRACT_VERSION = "voice-assets-v4"
+        private const val EXTRACT_VERSION = "voice-assets-v5"
 
         private const val ASSET_ROOT = "voice"
         private const val DIR_NAME = "voice"
