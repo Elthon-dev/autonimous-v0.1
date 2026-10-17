@@ -1,7 +1,7 @@
 # Bro.exe — Architecture (voice prototype)
 
 Bro.exe is a voice-first, fully on-device Android assistant. Its "brain" is a local
-GGUF model (LiquidAI LFM2.5-350M, Q4_K_M) run through a vendored llama.cpp binding;
+GGUF model (Qwen2.5-0.5B-Instruct, Q6_K) run through a vendored llama.cpp binding;
 speech in/out use vendored sherpa-onnx models. Nothing routes to OpenAI, OpenCode, or
 any remote LLM. The only network use is the optional DuckDuckGo web-search tool.
 
@@ -25,7 +25,7 @@ Foreground service               voice/VoiceService.kt   FOREGROUND_SERVICE_MICR
   :sherpa   vendored sherpa-onnx Kotlin API over libsherpa-onnx-jni.so + libonnxruntime.so
 
 Bundled assets (extracted on first launch, never committed):
-  models/lfm2.5-350m-q4_k_m.gguf · models/kws/* · models/asr/* · models/tts/* · keywords.txt
+  models/qwen2.5-0.5b-instruct-q6_k.gguf · models/kws/* · models/asr/* · models/tts/* · keywords.txt
 ```
 
 ## Voice pipeline (one turn)

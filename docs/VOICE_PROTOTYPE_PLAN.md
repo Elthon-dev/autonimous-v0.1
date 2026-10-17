@@ -54,32 +54,25 @@ Decisions implied by the user’s master prompt that this plan locks in:
 
 ## 2. Verified model/asset facts (web-verified, not assumed)
 
-### Local language model — REPLACES Qwen3.5
+### Local language model
 
-- **Model**: `LiquidAI/LFM2.5-350M-GGUF` → `LFM2.5-350M-Q4_K_M.gguf`
-  - Existence confirmed (HF API), file size **229,312,224 bytes** (≈229 MB).
-  - GGUF architecture **`lfm2`**; context 128k (we will use ~1k); chat template is
-    ChatML-style `<|im_start|>` with a special tool-list format and explicit
-    `keep_past_thinking` handling in the template.
-  - Publisher SHA-256 (to verify in CI):
-    `7e6f72643caafc9a68256686638c4d7916f2cec76d1df478d4c3ddcd95a6aed4`
-  - Recommended sampling from repo `leap/Q4_K_M.json`: temp 0.1, top_k 50,
-    repetition_penalty 1.05 (use for verification runs).
-- **License**: **LFM Open License v1.0** (`license:other / lfm1.0`, read in full).
-  - Redistribution in any medium (incl. bundling in an APK), even modified, is
-    **explicitly allowed** (§4), provided (a) license copy ships with the work,
-    (b) modifications are marked, (c) notices are kept.
-  - **Commercial-use cap**: only for entities over $10M revenue (§5). The user is a
-    student, non-commercial — **bundling is permitted**. The APK must ship the
-    LICENSE text. Noted in §12/permission plan.
-- **Runtime**: llama.cpp must support arch `lfm2`. Verified present in current
-  master (`src/llama-arch.cpp` has `LLM_ARCH_LFM2`). `v0.6.0` (the old pin) is too
-  old for comfort. **New pin: commit `358a420ec4ed59b6b0be08b1d1f71dd478b99a99`**
-  (2026-10-12). Milestone 1 re-verifies our thin JNI binding compiles against it.
-- The model family is not a Qwen-style reasoning engine with the old ` think`
-  markers; its template can be asked for **short, tool-using answers without
-  thinking blocks**, but this must be proven by measurement (Milestone 1), not
-  assumed.
+- **Model**: `Qwen/Qwen2.5-0.5B-Instruct-GGUF` → `qwen2.5-0.5b-instruct-q6_k.gguf`
+  - HF LFS object size **650,379,104 bytes** (≈620 MiB).
+  - GGUF architecture **`qwen2`**; context 32k (we use **2048**); chat template is
+    ChatML (`<|im_start|>` / `<|im_end|>`). **Non-reasoning**: the template does not
+    prefill a ` thinking` block, so generation starts in the answer.
+  - Verified LFS SHA-256 (re-checked in CI before extraction is trusted):
+    `2f82233630c349ccf6b8daccf48f9a7865713d9f08a2eadfa456cebe9b97c7f5`
+  - Recommended sampling (Qwen2.5-Instruct): temp 0.7, top_p 0.8, top_k 20,
+    repetition_penalty 1.05. Note the native binding decodes **greedily** and decoding
+    is scale-invariant, so temp/top_p/top_k are no-ops; only penalties change output.
+- **License**: **Apache-2.0** — redistribution inside the APK is permitted; the
+  LICENSE text ships as an asset (`licenses/Qwen2.5-0.5B-Instruct-Apache-2.0.txt`).
+- **Runtime**: llama.cpp arch `qwen2` is long-supported; the pin stays
+  **`358a420ec4ed59b6b0be08b1d1f71dd478b99a99`**.
+- This upgrades the earlier Q4_K_M build (491,400,032 B) to **Q6_K** for higher
+  answer quality at ~+159 MB, still RAM-safe on the ~3 GB target device. It also
+  supersedes the historic LiquidAI LFM2.5-350M candidate, which is no longer shipped.
 
 ### Offline speech assets (all English; user language support limited to English in
 this milestone — Filipino/Cebuano NOT provided, documented honestly)
@@ -93,21 +86,22 @@ this milestone — Filipino/Cebuano NOT provided, documented honestly)
       with the phrase **HEY BRO** using the official `sherpa-onnx-cli text2token`
       (tokens-type bpe). Verify detection with test audio in CI where possible.
 - **Speech recognition** (ASR, streaming transducer):
-  - Files from `csukuangfj/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17`, Apache-2.0:
-    - `encoder-epoch-99-avg-1.int8.onnx` (42,845,182 B)
-    - `decoder-epoch-99-avg-1.int8.onnx` (539,499 B)
-    - `joiner-epoch-99-avg-1.int8.onnx` (259,572 B)
+  - Files from `csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26`, Apache-2.0:
+    - `encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx` (71,083,163 B)
+    - `decoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx` (1,307,236 B)
+    - `joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx` (259,335 B)
     - `tokens.txt` (5,048 B)
-    - int8 chosen to save RAM (~44 MB total).
+    - int8 chosen to save RAM (~73 MB total); upgraded from the tiny 20M-2023-02-17
+      model, which was the root cause of poor recognition accuracy.
 - **Speech output** (TTS, Piper via sherpa-onnx):
-  - `csukuangfj/vits-piper-en_US-amy-low` (sherpa-onnx **converted** model). The raw
+  - `csukuangfj/vits-piper-en_US-ryan-low` (sherpa-onnx **converted** model; male voice). The raw
     `rhasspy/piper-voices` `.onnx`+`.onnx.json` is NOT loadable by sherpa-onnx — VITS
     needs `tokens.txt` and an `espeak-ng-data/` directory alongside the model.
-  - Bundled from the `sherpa-onnx` release asset `vits-piper-en_US-amy-low-int8.tar.bz2`
-    (21,099,246 B; int8 chosen to save ~48 MB vs. the 67 MB fp32). Extracted tree:
-    `en_US-amy-low.onnx` (18,657,565 B int8), `en_US-amy-low.onnx.json`, `tokens.txt`,
+  - Bundled from the `sherpa-onnx` release asset `vits-piper-en_US-ryan-low-int8.tar.bz2`
+    (21,212,659 B; int8 chosen to save ~48 MB vs. the fp32). Extracted tree:
+    `en_US-ryan-low.onnx` (18,657,565 B int8), `en_US-ryan-low.onnx.json`, `tokens.txt`,
     `espeak-ng-data/**` (355 files), `MODEL_CARD`. License: Piper is MIT; verify text.
-  - On-device config: `OfflineTtsVitsModelConfig(model=…/en_US-amy-low.onnx,
+  - On-device config: `OfflineTtsVitsModelConfig(model=…/en_US-ryan-low.onnx,
     tokens=…/tokens.txt, dataDir=…/espeak-ng-data)`.
 - **Inference engine** for all three: **sherpa-onnx v1.13.8** (2026-09-10),
   packaged for Android via the release `sherpa-onnx-v1.13.8-android.tar.bz2`
@@ -139,10 +133,10 @@ Single audio pipeline. **Sequential engine lease**, never all-at-once:
 
 - idle: KWS model resident only (small).
 - on wake: release KWS → init streaming ASR; transcribe; release ASR.
-- LLM: load (229 MB Q4_K_M), ctx ~1024, threads measured (start 4), max new tokens
+- LLM: load (620 MB Q6_K), ctx 2048, threads measured (start 4), max new tokens
   ~96–128, cancel on mode-off; release after answer (or retain only if measurements
   prove it safe).
-- TTS: load 63 MB Piper only to synth/speak, then release. No synthetic delay.
+- TTS: load ~19 MB Piper int8 only to synth/speak, then release. No synthetic delay.
 - Bounded buffers, bounded final-answer length, `onTrimMemory`, no `System.gc()`
   as strategy, storage check before asset extraction, atomic completion marker,
   partial-failure cleanup, truthful statuses.
@@ -174,9 +168,10 @@ measured and reported, not assumed.
 
 0. **Backup + plan** (this doc; backup branch created). ✅ done
 1. **Native smoke test** (CI, linux-x86 runners). ✅ done
-   - Build llama.cpp @ `358a420e` for host; download `LFM2.5-350M-Q4_K_M.gguf`;
-     verified bytes 229,312,224 and SHA-256
-     `7e6f72643caafc9a68256686638c4d7916f2cec76d1df478d4c3ddcd95a6aed4`.
+   - Host smoke now exercises the shipped model: download
+     `qwen2.5-0.5b-instruct-q6_k.gguf`; verified bytes 650,379,104 and SHA-256
+     `2f82233630c349ccf6b8daccf48f9a7865713d9f08a2eadfa456cebe9b97c7f5`.
+     (The earlier LiquidAI LFM2.5-350M `229,312,224`/`7e6f7264…` run is superseded.)
    - Matrix result (6 combos): `tmpl_special` + `bos_special` prompt modes answer
      cleanly ("Paris is the capital of France."). `tmpl_auto` (add_special=true)
      repaints "The assistant's response is:" — root cause = auto-BOS token.
@@ -249,7 +244,7 @@ measured and reported, not assumed.
 - Exact JNI surface of sherpa-onnx v1.13.8 Android tarball (Kotlin class names /
   constructor config, `AudioRecord` helper) — resolved in step 3 by reading the
   vendored classes.
-- LFM2.5-350M real-world reliability for tool decisions + spoken brevity on-device —
+- Qwen2.5-0.5B real-world reliability for tool decisions + spoken brevity on-device —
   Milestone 1 + device test; expect tuning.
 - KWS detection threshold for “HEY BRO” — needs real audio (CiA fixtures help) and
   device tuning; false-positive/miss rates will be recorded.

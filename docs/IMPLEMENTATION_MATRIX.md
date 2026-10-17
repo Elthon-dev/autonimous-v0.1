@@ -26,7 +26,7 @@ removed in milestone 7; see `backup/assistant-phase2` for its history). Legend:
 | Crash capture / diagnostics | CI (logic) + COMPILED | `CrashReporter` (uncaught handler + `ApplicationExitInfo` history) → `last_crash.txt`, shown in diagnostics + report. Root cause unconfirmed. DEVICE. |
 | Streaming speech recognition (ASR) | COMPILED | `CommandTranscriber` (zipformer en-20M int8), greedy, endpoint on; `result()` + confidence (`ysProbs`) exposed. DEVICE. |
 | Local LLM inference (llama.cpp) | COMPILED | `:llama` + `LlmResponder`; pinned commit + GGUF SHA verified by the smoke test. DEVICE. |
-| Local TTS (Piper VITS) | COMPILED | `Speaker` (en_US-amy-low int8 + espeak-ng-data). DEVICE. |
+| Local TTS (Piper VITS) | COMPILED | `Speaker` (en_US-ryan-low int8, male + espeak-ng-data). DEVICE. |
 | On-device answer quality | COMPILED | Model answers proven on the host smoke test; phone timing/quality unverified. DEVICE. |
 | Web search tool | CI (parser/trigger) | `WebSearch` + `DuckDuckGoParser` (unit-tested) + `SearchTrigger` (unit-tested). Live network call unverified. DEVICE. |
 | Search decision by the model | TODO | Search fires only on explicit phrases, not on model judgement. |
