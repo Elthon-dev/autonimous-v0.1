@@ -25,9 +25,9 @@ object VoiceSelfTest {
             VoiceTest.MIC -> mic(paths, seconds = 4)
             VoiceTest.WAKE -> wake(context, paths, seconds = 20)
             VoiceTest.DETECT -> detect(context, paths, seconds = 20)
-            VoiceTest.ASR -> asr(paths, seconds = 8)
+            VoiceTest.ASR -> asr(context, paths, seconds = 8)
             VoiceTest.AI -> ai(context, paths, CANNED_QUESTION)
-            VoiceTest.TTS -> tts(paths, CANNED_LINE)
+            VoiceTest.TTS -> tts(context, paths, CANNED_LINE)
             VoiceTest.FULL -> full(context, paths)
         }
         VoiceDiagnostics.event("test", "done ${test.name}")
@@ -66,7 +66,9 @@ object VoiceSelfTest {
         val input = AudioInput()
         val triggers = WakeConfig.active(context, paths.keywords)
         WakeConfig.writeActive(paths.activeKeywords, triggers)
+        CrashReporter.markNativeInit(context, "kws")
         val detector = WakeWordDetector(paths)
+        CrashReporter.clearNativeInit(context)
         val stream = detector.createStream()
         val verifier = WakeVerifier()
         input.start()
@@ -97,9 +99,11 @@ object VoiceSelfTest {
         return false
     }
 
-    private fun asr(paths: VoicePaths, seconds: Int): String {
+    private fun asr(context: Context, paths: VoicePaths, seconds: Int): String {
         val input = AudioInput()
+        CrashReporter.markNativeInit(context, "asr")
         val transcriber = CommandTranscriber(paths)
+        CrashReporter.clearNativeInit(context)
         val stream = transcriber.createStream()
         input.start()
         val end = SystemClock.elapsedRealtime() + seconds * 1000L
@@ -130,7 +134,9 @@ object VoiceSelfTest {
      */
     private fun detect(context: Context, paths: VoicePaths, seconds: Int): Pair<String, AddressingSignal>? {
         val input = AudioInput()
+        CrashReporter.markNativeInit(context, "asr")
         val transcriber = CommandTranscriber(paths)
+        CrashReporter.clearNativeInit(context)
         val vad = VoiceActivityDetector()
         val preRoll = AudioRingBuffer(15)
         input.start()
@@ -219,8 +225,10 @@ object VoiceSelfTest {
         return reply
     }
 
-    private fun tts(paths: VoicePaths, text: String) {
+    private fun tts(context: Context, paths: VoicePaths, text: String) {
+        CrashReporter.markNativeInit(context, "tts")
         val speaker = Speaker(paths)
+        CrashReporter.clearNativeInit(context)
         try {
             val audio = speaker.synthesize(text)
             if (audio.samples.isNotEmpty()) {
@@ -262,7 +270,7 @@ object VoiceSelfTest {
             return
         }
         VoiceDiagnostics.event("full", "stage 4/4: speak")
-        tts(paths, reply)
+        tts(context, paths, reply)
     }
 
     private const val CANNED_QUESTION = "What is two plus two? Answer in one short sentence."

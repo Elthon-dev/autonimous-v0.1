@@ -17,6 +17,23 @@ import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
 import java.io.File
 
 /**
+ * The streaming model family our ASR checkpoint belongs to.
+ *
+ * `sherpa-onnx-streaming-zipformer-en-2023-06-26` is a **zipformer2** export. When
+ * `model_type` is non-empty sherpa skips its automatic detection and constructs the
+ * model class for that exact string; the older `"zipformer"` class then reads
+ * metadata keys (e.g. `attention_dims`) this checkpoint does not carry, and the
+ * native loader calls `SHERPA_ONNX_EXIT(-1)` = `_Exit(-1)`, an uncatchable process
+ * death that leaves no NativeCrash tombstone. That was the Detect/Speech self-test
+ * crash: do not "simplify" this back to `"zipformer"`. `StreamingModelTypeTest`
+ * fails loudly if it does.
+ */
+const val ASR_MODEL_TYPE = "zipformer2"
+
+/** The keyword-spotter checkpoints are zipformer2 exports too; same `_Exit(-1)` trap. */
+const val KWS_MODEL_TYPE = "zipformer2"
+
+/**
  * Wake-word detector backed by the sherpa-onnx keyword spotter.
  *
  * The keyword set is read from a file the app owns ([VoicePaths.activeKeywords]),
@@ -47,7 +64,7 @@ class WakeWordDetector(private val paths: VoicePaths) {
                 ),
                 tokens = paths.kwsTokens.absolutePath,
                 numThreads = 1,
-                modelType = "zipformer2",
+                modelType = KWS_MODEL_TYPE,
             ),
             keywordsFile = keywordsFile.absolutePath,
             keywordsScore = 1.5f,
@@ -102,7 +119,7 @@ class CommandTranscriber(private val paths: VoicePaths) {
                 ),
                 tokens = paths.asrTokens.absolutePath,
                 numThreads = 2,
-                modelType = "zipformer",
+                modelType = ASR_MODEL_TYPE,
             ),
             enableEndpoint = true,
             decodingMethod = "greedy_search",

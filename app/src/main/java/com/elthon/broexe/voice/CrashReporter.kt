@@ -32,6 +32,7 @@ object CrashReporter {
     private const val DIR = "crashes"
     private const val FILE_NAME = "last_crash.txt"
     private const val TRACE_NAME = "last_crash_trace.bin"
+    private const val NATIVE_INIT_NAME = "native_init.txt"
     private const val PREFS = "broexe_crash"
     private const val KEY_LAST_LAUNCH = "last_launch_ms"
     private const val KEY_LAST_RESTART = "last_restart_ms"
@@ -98,7 +99,30 @@ object CrashReporter {
         runCatching { traceFile(context).delete() }
     }
 
+    /**
+     * Marks that a native voice engine is about to be constructed. sherpa-onnx reports a
+     * bad model/config by calling `_Exit(-1)`, which dies with no Java exception AND is
+     * classified `REASON_EXIT_SELF` — not one of [isFailure]'s reasons, so the exit record
+     * alone is invisible to triage. This breadcrumb outlives the process; the next launch
+     * folds it into the report so a silent native death still names what killed it.
+     */
+    fun markNativeInit(context: Context, label: String) {
+        runCatching {
+            val f = nativeInitFile(context)
+            f.parentFile?.mkdirs()
+            f.writeText("$label\n${System.currentTimeMillis()}\n")
+        }
+    }
+
+    /** Clears the breadcrumb once the native engine finished constructing successfully. */
+    fun clearNativeInit(context: Context) {
+        runCatching { nativeInitFile(context).delete() }
+    }
+
     private fun file(context: Context) = File(File(context.filesDir, DIR), FILE_NAME)
+
+    private fun nativeInitFile(context: Context) =
+        File(File(context.filesDir, DIR), NATIVE_INIT_NAME)
 
     private fun traceFile(context: Context) = File(File(context.filesDir, DIR), TRACE_NAME)
 
@@ -120,13 +144,37 @@ object CrashReporter {
     }
 
     private fun capturePreviousExit(context: Context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
+        // A breadcrumb left by markNativeInit means a native constructor never returned.
+        // sherpa-onnx signals bad config with `_Exit(-1)` (REASON_EXIT_SELF, not a
+        // "failure" reason), so the exit record alone would be filtered out below.
+        val nativeInitLabel = nativeInitFile(context)
+            .takeIf { it.isFile }
+            ?.readText()
+            ?.trim()
+            ?.lineSequence()
+            ?.firstOrNull()
+            ?.takeIf { it.isNotBlank() }
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            if (nativeInitLabel != null) {
+                write(context, nativeInitReport(nativeInitLabel))
+                runCatching { nativeInitFile(context).delete() }
+            }
+            return
+        }
         val am = context.getSystemService(ActivityManager::class.java) ?: return
         val since = prefs(context).getLong(KEY_LAST_LAUNCH, 0L)
         val infos = runCatching { am.getHistoricalProcessExitReasons(null, 0, 8) }.getOrNull() ?: return
 
-        val interesting = infos.filter { it.timestamp > since && isFailure(it.reason) }
-            .maxByOrNull { it.timestamp } ?: return
+        val interesting = infos.filter {
+            it.timestamp > since && (isFailure(it.reason) || nativeInitLabel != null)
+        }.maxByOrNull { it.timestamp }
+
+        if (interesting == null) {
+            if (nativeInitLabel != null) write(context, nativeInitReport(nativeInitLabel))
+            runCatching { nativeInitFile(context).delete() }
+            return
+        }
         val raw = runCatching {
             interesting.traceInputStream?.use { it.readBytes() }
         }.getOrNull()
@@ -221,10 +269,24 @@ object CrashReporter {
                 "reason=" + reasonName(interesting.reason) + "\n" +
                 "time=" + stamp(interesting.timestamp) + "\n" +
                 "status=" + interesting.status + "\n"
-            write(context, merged)
+            write(context, merged + nativeInitNote(nativeInitLabel))
         } else {
-            write(context, text)
+            write(context, text + nativeInitNote(nativeInitLabel))
         }
+        runCatching { nativeInitFile(context).delete() }
+    }
+
+    private fun nativeInitNote(label: String?): String =
+        if (label == null) "" else "\nnative_init=$label\nnative_init_pending=true\n"
+
+    private fun nativeInitReport(label: String): String = buildString {
+        append("Bro.exe crash report\n")
+        append("type=native-init-incomplete\n")
+        append("time=").append(stamp(System.currentTimeMillis())).append('\n')
+        append("native_init=").append(label).append('\n')
+        append("note=the process died while constructing a native voice engine.\n")
+        append("note=sherpa-onnx calls _Exit(-1) on bad model/config: no signal, no Java\n")
+        append("note=exception, and classified REASON_EXIT_SELF, so exit triage misses it.\n")
     }
 
     private fun markLaunch(context: Context) {

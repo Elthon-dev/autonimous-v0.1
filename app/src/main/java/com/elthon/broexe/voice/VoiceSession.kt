@@ -92,7 +92,9 @@ class VoiceSession(
         var asr: CommandTranscriber? = null
         var hint: KeywordHint? = null
         try {
+            CrashReporter.markNativeInit(context, "asr")
             val transcriber = CommandTranscriber(paths)
+            CrashReporter.clearNativeInit(context)
             asr = transcriber
             val config = DetectionConfigStore.load(context)
             activeModel = modelManager.activeModel()
@@ -442,7 +444,9 @@ class VoiceSession(
         session: ConversationSession,
         config: DetectionConfig,
     ) {
+        CrashReporter.markNativeInit(context, "tts")
         val speaker = Speaker(paths)
+        CrashReporter.clearNativeInit(context)
         val audio = try {
             speaker.synthesize(text)
         } finally {
@@ -659,7 +663,9 @@ private class KeywordHint(context: Context, paths: VoicePaths) {
     init {
         val triggers = WakeConfig.active(context, paths.keywords)
         WakeConfig.writeActive(paths.activeKeywords, triggers)
+        CrashReporter.markNativeInit(context, "kws")
         detector = WakeWordDetector(paths)
+        CrashReporter.clearNativeInit(context)
         stream = detector.createStream()
     }
 
