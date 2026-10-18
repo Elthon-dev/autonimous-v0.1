@@ -166,22 +166,30 @@ class LlmResponder internal constructor(
         private val SPECIAL_TOKEN = Regex("<\\|[^|>]*\\|>")
 
         /**
-         * Spoken-voice contract: short, plain sentences. Kept short so the model
-         * stays on-topic and the TTS reply does not drone on.
+         * The one, stable system prompt.
+         *
+         * Stable is the whole point: the native layer caches this text's KV prefix and
+         * only re-decodes the variable user turn, so the moment this string changes the
+         * cache is thrown away. It therefore carries only invariant content — persona,
+         * the spoken-voice contract, and the real toolset ([Toolbox]) — never the time or
+         * the retrieved notes. Per OpenAI/Meta guidance, the stable prefix goes first and
+         * anything volatile goes in the user turn.
          */
-        const val SYSTEM_PROMPT =
-            "You are Bro, a friendly concise voice assistant. " +
-                "Reply in one or two short plain sentences. " +
-                "Do not use markdown, lists, or emoji. " +
-                "If you do not know, say so briefly."
+        val SYSTEM_PROMPT: String = buildString {
+            append("You are Bro, a friendly, concise voice assistant. ")
+            append("Answer in one or two short spoken sentences. ")
+            append("Do not use markdown, lists, or emoji. ")
+            append("If you do not know or are unsure, say so briefly instead of guessing. ")
+            append(Toolbox.promptBlock())
+        }
 
-        /** Used when web results are supplied: answer only from the given notes. */
-        const val SEARCH_SYSTEM_PROMPT =
-            "You are Bro, a friendly concise voice assistant. " +
-                "Answer the user's question using ONLY the web notes provided. " +
-                "Reply in one or two short plain sentences. " +
-                "Do not use markdown, lists, or emoji. " +
-                "If the notes do not contain the answer, say you could not find it."
+        /**
+         * Appended to the *user* turn when web notes are supplied, so the system prompt
+         * can stay byte-for-byte identical (and cacheable) whether or not a search ran.
+         */
+        const val NOTES_INSTRUCTION =
+            "Answer using only the web notes above for anything current; " +
+                "if they do not cover it, say so."
 
         @Volatile
         private var instance: LlmResponder? = null

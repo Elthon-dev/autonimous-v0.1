@@ -21,6 +21,12 @@
 //     the Qwen2.5 vocab, so it is not checked.
 //   - a  thinking...</think> reasoning block is stripped app-side by
 //     voice/ThinkingBlockFilter before TTS; the native layer stays model-agnostic.
+//   - the system prompt is rendered and decoded into the KV cache ONCE per
+//     processSystemPrompt() call; processUserPrompt() keeps that prefix and decodes
+//     only the user suffix (it re-checks that the prefix is really a prefix of the
+//     turn's tokens first, and falls back to a full clear+decode otherwise). This is
+//     the latency win: the app holds one stable system prompt for the whole session,
+//     so the prefix survives every turn and the self-review pass.
 //
 // JNI entry points mirror the previous ARM sample so app code keeps compiling
 // unchanged (see InferenceEngineImpl.kt).
@@ -81,6 +87,13 @@ static std::string      g_sys;        // last system prompt (raw text)
 static int              g_n_predict;  // remaining budget for the current turn
 static std::string      g_cache;      // incomplete UTF-8 tail buffer
 static llama_sampler  * g_smpl;       // per-turn sampler; free with free_sampler()
+
+// System-prompt KV prefix. The system prompt is invariant for a whole session, so its
+// tokens are decoded *once* and kept in the KV cache; each turn only removes everything
+// after the prefix and decodes the (cheap) user turn. This is the single biggest latency
+// lever for a stateless-per-turn app: the prefix is no longer re-decoded every turn.
+static std::vector<llama_token> g_prefix_tokens;
+static bool                     g_prefix_ready = false;
 
 // Built once per turn (processUserPrompt) and fed every accepted token, so the
 // repetition penalty accumulates over the actual conversation instead of being
@@ -175,6 +188,43 @@ static bool render_chat(const char *system, const char *user, std::string &out) 
     return true;
 }
 
+// Render only the system message. This is the prefix that will be held in the KV cache;
+// it must render to the exact bytes that begin the two-message render of the full turn,
+// which is what makes dropping the prefix token count safe below.
+static bool render_system(const char *system, std::string &out) {
+    llama_chat_message chat[] = {
+        { "system", system },
+    };
+    const char * tmpl = g_template.empty() ? nullptr : g_template.c_str();
+    int need = llama_chat_apply_template(tmpl, chat, 1, true, nullptr, 0);
+    if (need <= 0) {
+        LOGe("%s: chat template produced no output (need=%d)", __func__, need);
+        return false;
+    }
+    out.resize((size_t)need + 8);
+    need = llama_chat_apply_template(tmpl, chat, 1, true, out.data(), (int)out.size());
+    if (need < 0) {
+        LOGe("%s: chat template failed", __func__);
+        return false;
+    }
+    out.resize((size_t)need);
+    return true;
+}
+
+// Tokenize with the contract's flags (add_special=false, parse_special=true).
+static int tokenize(const std::string &text, std::vector<llama_token> &out) {
+    out.assign((size_t) text.size() + 4, 0);
+    const int n = llama_tokenize(g_vocab, text.c_str(), (int) text.size(),
+                                 out.data(), (int) out.size(),
+                                 /* add_special */ false, /* parse_special */ true);
+    if (n <= 0) {
+        out.clear();
+        return n;
+    }
+    out.resize((size_t) n);
+    return n;
+}
+
 static int decode_tokens(const std::vector<llama_token> &tokens) {
     for (int i = 0; i < (int) tokens.size(); i += BATCH_SIZE) {
         const int n = std::min((int) tokens.size() - i, BATCH_SIZE);
@@ -199,6 +249,8 @@ static void reset_state() {
     free_sampler();
     g_cache.clear();
     g_sys.clear();
+    g_prefix_tokens.clear();
+    g_prefix_ready = false;
     g_n_predict = 0;
 }
 
@@ -413,6 +465,23 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_processSystemPrompt(
     g_sys = system_prompt;
     env->ReleaseStringUTFChars(jsystem_prompt, system_prompt);
     LOGd("%s: system prompt cached (%zu bytes)", __func__, g_sys.size());
+
+    // Decode the system prompt into the KV cache once, so every turn after this only
+    // has to decode its own (small) suffix. If anything here fails we simply fall back
+    // to a full decode-per-turn, which is the old behaviour and still correct.
+    if (g_context && g_vocab) {
+        std::string sys_rendered;
+        if (render_system(g_sys.c_str(), sys_rendered) &&
+            tokenize(sys_rendered, g_prefix_tokens) > 0) {
+            llama_memory_clear(llama_get_memory(g_context), false);
+            if (decode_tokens(g_prefix_tokens) == 0) {
+                g_prefix_ready = true;
+                LOGi("%s: KV prefix armed (%zu tokens)", __func__, g_prefix_tokens.size());
+            } else {
+                g_prefix_tokens.clear();
+            }
+        }
+    }
     return 0;
 }
 
@@ -450,21 +519,34 @@ Java_com_arm_aichat_internal_InferenceEngineImpl_processUserPrompt(
     LOGd("%s: rendered prompt (%zu bytes)", __func__, rendered.size());
 
     // Contract: add_special=false, parse_special=true (auto-BOS corrupts role header).
-    std::vector<llama_token> tokens((size_t) rendered.size() + 4);
-    const int n_tok = llama_tokenize(g_vocab, rendered.c_str(), (int) rendered.size(),
-                                     tokens.data(), (int) tokens.size(),
-                                     /* add_special */ false, /* parse_special */ true);
+    std::vector<llama_token> tokens;
+    const int n_tok = tokenize(rendered, tokens);
     if (n_tok <= 0) {
         LOGe("%s: tokenize failed (n_tok=%d)", __func__, n_tok);
         return 3;
     }
-    tokens.resize((size_t) n_tok);
 
-    // Fresh turn: clear KV and re-decode the full rendered prompt.
-    llama_memory_clear(llama_get_memory(g_context), false);
-    if (decode_tokens(tokens)) {
-        LOGe("%s: prompt decode failed", __func__);
-        return 4;
+    // Reuse the cached system-prompt prefix when it is genuinely a prefix of this
+    // turn's tokens: keep KV[0, n_prefix), drop the rest, decode only the suffix.
+    const size_t n_prefix = g_prefix_ready ? g_prefix_tokens.size() : 0;
+    const bool reuse = n_prefix > 0 && n_prefix < tokens.size() &&
+                       std::equal(g_prefix_tokens.begin(), g_prefix_tokens.end(), tokens.begin());
+    bool reused = false;
+    if (reuse && llama_memory_seq_rm(llama_get_memory(g_context), 0, (llama_pos) n_prefix, -1)) {
+        std::vector<llama_token> suffix(tokens.begin() + (long) n_prefix, tokens.end());
+        if (decode_tokens(suffix) == 0) {
+            reused = true;
+            LOGd("%s: reused %zu-token KV prefix, decoded %zu-token suffix",
+                 __func__, n_prefix, suffix.size());
+        }
+    }
+    if (!reused) {
+        // Fresh turn, prefix changed, or a partial remove was refused: full decode.
+        llama_memory_clear(llama_get_memory(g_context), false);
+        if (decode_tokens(tokens) != 0) {
+            LOGe("%s: prompt decode failed", __func__);
+            return 4;
+        }
     }
 
     // Per-turn sampler: penalty -> greedy, seeded with the prompt so the first

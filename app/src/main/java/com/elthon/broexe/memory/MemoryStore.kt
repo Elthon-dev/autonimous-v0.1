@@ -8,9 +8,9 @@ import java.util.UUID
 /**
  * Durable store of user-provided facts.
  *
- * Only explicit "remember ..." facts are ever written here — never microphone
- * audio and never ambient conversation. The store is text-only, tiny, and safe
- * to keep across launches.
+ * Holds short, first-person facts — both explicit "remember ..." ones and those
+ * recognised from ordinary speech. Never microphone audio and never raw conversation
+ * transcripts. The store is text-only, tiny, and safe to keep across launches.
  */
 interface MemoryStore {
     /** Every remembered fact, oldest first. */

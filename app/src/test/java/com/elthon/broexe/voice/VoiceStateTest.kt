@@ -13,8 +13,17 @@ class VoiceStateTest {
     }
 
     @Test
-    fun searchSystemPromptMentionsNotes() {
-        assertTrue(LlmResponder.SEARCH_SYSTEM_PROMPT.contains("web notes", ignoreCase = true))
+    fun systemPromptNamesTheRealTools() {
+        val prompt = LlmResponder.SYSTEM_PROMPT
+        assertTrue(prompt.contains("web_search"))
+        assertTrue(prompt.contains("clock"))
+        assertTrue(prompt.contains("memory"))
+        assertTrue(prompt.contains("no others", ignoreCase = true))
+    }
+
+    @Test
+    fun notesInstructionMentionsNotes() {
+        assertTrue(LlmResponder.NOTES_INSTRUCTION.contains("notes", ignoreCase = true))
     }
 
     @Test

@@ -8,8 +8,10 @@ import com.elthon.broexe.memory.FileMemoryStore
 import com.elthon.broexe.memory.Memory
 import com.elthon.broexe.memory.MemoryDirective
 import com.k2fsa.sherpa.onnx.OnlineStream
+import com.elthon.broexe.memory.FactExtractor
 import com.elthon.broexe.memory.MemoryFlow
 import com.elthon.broexe.memory.MemoryStore
+import com.elthon.broexe.memory.SessionMemory
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.coroutineScope
@@ -67,10 +69,17 @@ class VoiceSession(
     private val modelManager by lazy { ModelManager.forContext(context, paths.llm) }
 
     /**
-     * Persistent, retrievable user facts. Text-only and written solely on an
-     * explicit "remember ..." command — never microphone audio or ambient speech.
+     * Persistent, retrievable user facts. Text-only: written both on an explicit
+     * "remember ..." command and when a short first-person fact is recognised in normal
+     * speech. Never microphone audio and never a raw transcript.
      */
     private val memoryStore: MemoryStore by lazy { FileMemoryStore(File(context.filesDir, "memory.txt")) }
+
+    /**
+     * Current-session working set: the last few turns plus facts seen this session.
+     * Bounded and never persisted — see [SessionMemory].
+     */
+    private val sessionMemory = SessionMemory()
 
     /** The model chosen for this session, resolved once in [run]. */
     private var activeModel: ActiveModel? = null
@@ -112,6 +121,7 @@ class VoiceSession(
                 ambiguousClarify = config.ambiguousClarify,
             )
             val session = ConversationSession(config.followUpMs, config.idleTimeoutMs)
+            sessionMemory.clear()
             if (config.keywordHint) {
                 hint = runCatching { KeywordHint(context, paths) }
                     .onFailure { VoiceDiagnostics.event("detect", "keyword hint unavailable: ${it.message}") }
@@ -372,14 +382,14 @@ class VoiceSession(
             VoiceDiagnostics.event("detect", "address phrase present in transcript")
         }
 
-        // Memory commands are answered without the LLM; other turns get any
-        // relevant remembered facts injected into the prompt below.
+        // Explicit memory commands are answered without the LLM.
         val facts = when (val directive = MemoryFlow.handle(memoryStore, request, now)) {
             is MemoryDirective.Reply -> {
                 VoiceDiagnostics.event("memory", "direct reply (${directive.text})")
                 session.assistantThinking(SystemClock.elapsedRealtime())
                 onState(VoiceState.THINKING)
                 if (!running) return
+                sessionMemory.recordTurn(request, directive.text)
                 speakReply(directive.text, asr, session, config)
                 return
             }
@@ -390,8 +400,24 @@ class VoiceSession(
             VoiceDiagnostics.event("memory", "recalled ${facts.size} fact(s) for this turn")
         }
 
+        // Learn durable facts from ordinary speech; no "remember this" needed.
+        rememberStatedFacts(request, now)
+
+        // Clock tool: answered locally, so the time can never be hallucinated.
+        if (TimeIntent.matches(request)) {
+            VoiceDiagnostics.event("tool", "clock: answered locally")
+            session.assistantThinking(SystemClock.elapsedRealtime())
+            onState(VoiceState.THINKING)
+            if (!running) return
+            val timeReply = TimeContext.nowLine()
+            sessionMemory.recordTurn(request, timeReply)
+            speakReply(timeReply, asr, session, config)
+            return
+        }
+
         val searchQuery = SearchTrigger.detect(request)
         val results = if (searchQuery != null) {
+            VoiceDiagnostics.event("tool", "web search: $searchQuery")
             onState(VoiceState.SEARCHING)
             val found = runCatching { webSearch.search(searchQuery) }.getOrDefault(emptyList())
             if (found.isEmpty()) onDetail("No web results; answering locally.")
@@ -408,7 +434,25 @@ class VoiceSession(
             onDetail("The local AI produced no answer.")
             return
         }
+        sessionMemory.recordTurn(request, reply)
         speakReply(reply, asr, session, config)
+    }
+
+    /**
+     * Store short first-person facts the user stated, without them having to say
+     * "remember". De-duplicated against what is already stored, so repeats cost nothing.
+     */
+    private fun rememberStatedFacts(request: String, now: Long) {
+        val extracted = FactExtractor.extract(request)
+        if (extracted.isEmpty()) return
+        val known = memoryStore.all().map { it.text.lowercase() }.toMutableSet()
+        for (fact in extracted) {
+            sessionMemory.noteFact(fact)
+            if (known.add(fact.lowercase())) {
+                runCatching { memoryStore.add(fact, now) }
+                    .onSuccess { VoiceDiagnostics.event("memory", "learned: $fact") }
+            }
+        }
     }
 
     /**
@@ -547,12 +591,7 @@ class VoiceSession(
             VoiceDiagnostics.event("ai", "no chat model available; cannot answer")
             return ""
         }
-        val basePrompt = if (results != null) {
-            LlmResponder.SEARCH_SYSTEM_PROMPT
-        } else {
-            LlmResponder.SYSTEM_PROMPT
-        }
-        val systemPrompt = TimeContext.systemPrompt(basePrompt)
+        val systemPrompt = LlmResponder.SYSTEM_PROMPT
         val outcome = try {
             responder.ensureLoaded(active.file, systemPrompt)
         } catch (t: Throwable) {
@@ -569,24 +608,7 @@ class VoiceSession(
         }
         // Not unloaded here: the model stays resident for the next turn. It is freed
         // once, in run()'s finally, when the voice session ends.
-        val prompt = if (results == null && facts.isEmpty()) {
-            question
-        } else {
-            buildString {
-                if (results != null) {
-                    append("Web notes:\n")
-                    append(LlmResponder.renderResults(results))
-                    append("\n\n")
-                }
-                if (facts.isNotEmpty()) {
-                    append("Facts you remember about the user:\n")
-                    facts.forEach { append("- ").append(it.text).append('\n') }
-                    append('\n')
-                }
-                append("Question: ")
-                append(question)
-            }
-        }
+        val prompt = buildTurnPrompt(question, results, facts)
         val draft = responder.answer(prompt, thinking = active.model.thinking)
         if (draft.isBlank() ||
             !ReflectionPolicy.shouldReflect(question, results != null, facts.isNotEmpty())
@@ -600,6 +622,47 @@ class VoiceSession(
             thinking = active.model.thinking,
         )
         return improved.ifBlank { draft }
+    }
+
+    /**
+     * Assemble the variable part of the turn: recent session turns, relevant facts,
+     * web notes and the current time — all of it *outside* the system prompt so the
+     * native KV-cache prefix is never invalidated mid-session.
+     */
+    private fun buildTurnPrompt(
+        question: String,
+        results: List<SearchResult>?,
+        facts: List<Memory>,
+    ): String {
+        val turns = sessionMemory.recentTurns()
+        val known = LinkedHashSet<String>()
+        facts.forEach { known.add(it.text) }
+        sessionMemory.relevantFacts(question).forEach { known.add(it) }
+
+        val sb = StringBuilder()
+        if (turns.isNotEmpty()) {
+            sb.append("Conversation so far:\n")
+            turns.forEach { turn ->
+                sb.append("User: ").append(turn.user).append('\n')
+                sb.append("Bro: ").append(turn.assistant).append('\n')
+            }
+            sb.append('\n')
+        }
+        if (known.isNotEmpty()) {
+            sb.append("Things you know about the user:\n")
+            known.forEach { sb.append("- ").append(it).append('\n') }
+            sb.append('\n')
+        }
+        if (results != null) {
+            sb.append("Web notes:\n")
+            sb.append(LlmResponder.renderResults(results))
+            sb.append('\n')
+            sb.append(LlmResponder.NOTES_INSTRUCTION)
+            sb.append("\n\n")
+        }
+        sb.append(TimeContext.nowLine()).append('\n')
+        sb.append("Question: ").append(question)
+        return sb.toString()
     }
 
     private fun nextId(): String = "u" + (++utteranceSeq)
