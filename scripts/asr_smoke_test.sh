@@ -88,7 +88,7 @@ rec = sherpa_onnx.OfflineRecognizer.from_transducer(
 s = rec.create_stream()
 s.accept_waveform(sr, x)
 rec.decode_stream(s)
-hyp = rec.get_result(s).text
+hyp = s.result.text
 
 ref_n, hyp_n = norm(reference), norm(hyp)
 score = wer(ref_n, hyp_n)
