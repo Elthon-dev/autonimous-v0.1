@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fetch + verify the bundled voice assets (LLM, wake-word KWS, streaming ASR, TTS).
+# Fetch + verify the bundled voice assets (LLM, wake-word KWS, Parakeet ASR, TTS).
 #
 # Usage:
 #   scripts/fetch_voice_assets.sh [OUT_DIR] [verify|generate]

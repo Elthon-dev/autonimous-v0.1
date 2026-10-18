@@ -99,11 +99,11 @@ jobs:
       - name: Run native smoke test
         run: bash scripts/llm_smoke_test.sh
 
-  # Streaming-ASR accuracy evidence: run the bundled 20M model and the larger
-  # 2023-06-26 candidate on the same reference audio with the same sherpa-onnx
-  # streaming-transducer engine, and require the new model's WER to be <= the old.
+  # Parakeet-ASR accuracy evidence: pull the exact int8 transducer that ships in
+  # the APK (nemo-parakeet-tdt-0.6b-v2-int8) and require its WER on the model's
+  # own reference clip to stay inside a sane budget.
   asr-smoke:
-    name: Streaming ASR WER smoke test
+    name: Parakeet ASR WER smoke test
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:

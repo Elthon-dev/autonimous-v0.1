@@ -96,13 +96,14 @@ class VoicePaths private constructor(val root: File) {
         private const val LLM_REL = "models/qwen2.5-0.5b-instruct-q6_k.gguf"
 
         /**
-         * Rough extraction footprint with headroom for the staging copy. The staged tree
-         * is ~730 MB (the 620 MB GGUF dominates); a re-extract briefly holds the old tree
-         * plus the new one, so we ask for more than the tree alone.
+         * Extraction footprint of the staged tree itself, with headroom: the staged tree
+         * is ~1.29 GiB (the 620 MB GGUF plus the ~661 MB Parakeet ASR). A re-extract also
+         * has the *old* tree on disk while the new one is staged, so [ensureExtracted]
+         * adds the current tree's size to this before checking free space.
          */
-        const val REQUIRED_BYTES: Long = 950L * MB
+        const val REQUIRED_BYTES: Long = 1_500L * MB
 
-        private const val EXTRACT_VERSION = "voice-assets-v5"
+        private const val EXTRACT_VERSION = "voice-assets-v6"
 
         private const val ASSET_ROOT = "voice"
         private const val DIR_NAME = "voice"
@@ -146,8 +147,12 @@ class VoicePaths private constructor(val root: File) {
 
             val stat = StatFs(context.filesDir.absolutePath)
             val available = stat.availableBytes
-            if (available < REQUIRED_BYTES) {
-                throw InsufficientStorageException(REQUIRED_BYTES, available)
+            // A re-extract keeps the old tree until the new one is staged, so the peak
+            // free space is the old tree plus the new one.
+            val existing = if (paths.root.isDirectory) dirBytes(paths.root) else 0L
+            val needed = existing + REQUIRED_BYTES
+            if (available < needed) {
+                throw InsufficientStorageException(needed, available)
             }
 
             val tmp = File(context.filesDir, TMP_NAME)
@@ -191,6 +196,13 @@ class VoicePaths private constructor(val root: File) {
 
         private fun markerValue(llmSha256: String?): String =
             if (llmSha256.isNullOrBlank()) EXTRACT_VERSION else "$EXTRACT_VERSION:$llmSha256"
+
+        /** Recursive size of an on-disk directory (0 if it does not exist). */
+        private fun dirBytes(dir: File): Long {
+            var sum = 0L
+            dir.walkTopDown().forEach { if (it.isFile) sum += it.length() }
+            return sum
+        }
 
         /** Sum of the uncompressed asset lengths under [assetPath] (0 for compressed leaves). */
         private fun assetTreeBytes(assets: AssetManager, assetPath: String): Long {

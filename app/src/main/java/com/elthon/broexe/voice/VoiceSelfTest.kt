@@ -3,7 +3,6 @@ package com.elthon.broexe.voice
 import android.content.Context
 import android.os.SystemClock
 import com.elthon.broexe.ai.ModelManager
-import com.k2fsa.sherpa.onnx.OnlineStream
 import java.util.Locale
 
 /** The stages the diagnostics screen can exercise one at a time. */
@@ -104,20 +103,18 @@ object VoiceSelfTest {
         CrashReporter.markNativeInit(context, "asr")
         val transcriber = CommandTranscriber(paths)
         CrashReporter.clearNativeInit(context)
-        val stream = transcriber.createStream()
         input.start()
         val end = SystemClock.elapsedRealtime() + seconds * 1000L
+        val frames = ArrayList<FloatArray>()
         var text = ""
         try {
             while (SystemClock.elapsedRealtime() < end) {
                 val f = input.readFrame()
                 if (f.isEmpty()) continue
                 VoiceDiagnostics.onFrame(audioLevel(f), audioPeak(f))
-                transcriber.accept(stream, f)
-                val t = transcriber.text(stream)
-                if (t.isNotBlank()) text = t
-                if (transcriber.isEndpoint(stream) && text.isNotBlank()) break
+                frames.add(f)
             }
+            text = transcriber.transcribe(flattenAudio(frames)).text
         } finally {
             input.stop()
             input.release()
@@ -150,7 +147,7 @@ object VoiceSelfTest {
         val end = SystemClock.elapsedRealtime() + seconds * 1000L
         var capturing = false
         var startedAt = 0L
-        var stream: OnlineStream? = null
+        var frames: ArrayList<FloatArray>? = null
         var ehsBest: EhsDecision? = null
         var ehsClarity = 0
         try {
@@ -168,36 +165,33 @@ object VoiceSelfTest {
                     if (vad.process(level, now) == VadEvent.SPEECH_START) {
                         capturing = true
                         startedAt = now
-                        val s = transcriber.createStream()
-                        stream = s
-                        for (p in preRoll.drain()) transcriber.accept(s, p)
+                        val buf = ArrayList<FloatArray>()
+                        for (p in preRoll.drain()) buf.add(p)
+                        frames = buf
                         VoiceDiagnostics.onSpeechCandidate("self-test", 0)
                     }
                 } else {
-                    val s = stream!!
-                    transcriber.accept(s, f)
+                    frames!!.add(f)
                     val dur = vad.speechDurationMs(now)
                     if (vad.process(level, now) == VadEvent.SPEECH_END || now - startedAt > VoiceSession.MAX_UTTERANCE_MS) {
-                        val text = transcriber.text(s).trim()
-                        val conf = transcriber.confidence(s)
-                        s.release()
-                        stream = null
+                        val result = transcriber.transcribe(flattenAudio(frames!!))
+                        val text = result.text
                         val ctx = DetectionContext(
                             speechMs = dur,
-                            asrConfidence = conf,
+                            asrConfidence = result.confidence,
                             standaloneBro = true,
                             ehsDecision = ehsBest,
                             ehsClarity = ehsClarity,
                         )
                         val signal = AddressingDetector.evaluate(text, ctx)
-                        val result = ActivationDecider().decide(signal, ctx, "self-test", now)
+                        val actResult = ActivationDecider().decide(signal, ctx, "self-test", now)
                         VoiceDiagnostics.onAsr(text.ifBlank { "(nothing)" })
                         VoiceDiagnostics.event(
                             "detect",
                             String.format(
                                 Locale.US,
                                 "self-test: \u201c%s\u201d score=%.2f (%s) -> %s [%s]",
-                                text, signal.score, result.band.name, result.decision.name,
+                                text, signal.score, actResult.band.name, actResult.decision.name,
                                 signal.reasonString(),
                             ),
                         )
@@ -206,7 +200,6 @@ object VoiceSelfTest {
                 }
             }
         } finally {
-            runCatching { stream?.release() }
             input.stop()
             input.release()
             transcriber.release()

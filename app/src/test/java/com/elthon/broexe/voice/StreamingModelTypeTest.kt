@@ -4,28 +4,24 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * Guards the ASR `model_type` value that crashed the Detect/Speech self-tests.
+ * Guards the `model_type` values that, when wrong, kill the process.
  *
- * `sherpa-onnx-streaming-zipformer-en-2023-06-26` is a zipformer2 checkpoint. Passing
- * the legacy `"zipformer"` string makes sherpa skip model auto-detection and build the
- * wrong class, which reads missing ONNX metadata and terminates the process via
- * `_Exit(-1)` — no exception, no tombstone, just a dead app. This test is the tripwire
- * for anyone who edits that string.
+ * When `model_type` is non-empty sherpa skips model auto-detection and builds the
+ * class for that exact string; a wrong value reads missing ONNX metadata and the
+ * native loader calls `_Exit(-1)` — no exception, no tombstone, just a dead app.
+ * The ASR is now an offline Parakeet TDT NeMo transducer (`"nemo_transducer"`), and
+ * the keyword spotter remains a zipformer2 export. This test is the tripwire for
+ * anyone who edits either string.
  */
 class StreamingModelTypeTest {
 
     @Test
     fun asrModelTypeMatchesCheckpoint() {
-        assertEquals(NATIVE_MODEL_TYPE, ASR_MODEL_TYPE)
+        assertEquals("nemo_transducer", ASR_MODEL_TYPE)
     }
 
     @Test
-    fun kwsAlsoUsesZipformer2() {
-        assertEquals(NATIVE_MODEL_TYPE, KWS_MODEL_TYPE)
-    }
-
-    private companion object {
-        /** The family advertised in the ASR/KWS encoder ONNX metadata. */
-        const val NATIVE_MODEL_TYPE = "zipformer2"
+    fun kwsUsesZipformer2() {
+        assertEquals("zipformer2", KWS_MODEL_TYPE)
     }
 }
